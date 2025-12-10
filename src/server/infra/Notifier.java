@@ -9,7 +9,10 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
-
+/**
+ * Notificador (Pareja C)
+ * Envía el estado del documento y el VectorClock a los clientes.
+ */
 public class Notifier {
 
     private final List<IClientCallback> clients =
@@ -24,27 +27,25 @@ public class Notifier {
     }
 
     public void registerClient(IClientCallback client,
-                               String initialDocument,
-                               VectorClock initialClock) {
+                               String docSnapshot,
+                               VectorClock clockSnapshot) {
         clients.add(client);
-        System.out.println("[Server " + myServerId + "] Cliente registrado. Total: " + clients.size());
+        System.out.println("[Server " + myServerId + "] Cliente registrado (" + clients.size() + ")");
 
         try {
-            client.updateDocument(initialDocument, initialClock);
+            client.syncState(docSnapshot, clockSnapshot);
         } catch (RemoteException e) {
-            System.err.println("[Server " + myServerId + "] Error enviando estado inicial al cliente: " + e);
+            System.err.println("[Server " + myServerId + "] Error inicial syncState: " + e);
             clients.remove(client);
         }
     }
 
     public void unregisterClient(IClientCallback client) {
         clients.remove(client);
-        System.out.println("[Server " + myServerId + "] Cliente desregistrado. Total: " + clients.size());
     }
 
     /**
-     * Envía el documento y vector clock actuales a todos los clientes.
-     * Sólo se ejecuta si este servidor es LÍDER.
+     * Envía el documento y el reloj a TODOS los clientes conectados.
      */
     public void broadcast(String documentSnapshot, VectorClock clockSnapshot) {
         if (!serverState.isLeader()) return;
@@ -54,9 +55,9 @@ public class Notifier {
             while (it.hasNext()) {
                 IClientCallback client = it.next();
                 try {
-                    client.updateDocument(documentSnapshot, clockSnapshot);
+                    client.syncState(documentSnapshot, clockSnapshot);
                 } catch (RemoteException e) {
-                    System.out.println("[Server " + myServerId + "] Cliente no responde, lo elimino.");
+                    System.out.println("[Server " + myServerId + "] Cliente no responde, eliminado");
                     it.remove();
                 }
             }
