@@ -65,3 +65,54 @@ graph TD
     Doc -.- noteB
     HB -.- noteC
 ```
+``` mermaid
+graph TD
+    %% Estilos
+    classDef pairA fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef pairB fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef pairC fill:#ffebee,stroke:#c62828,stroke-width:2px;
+    classDef common fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5;
+
+    subgraph COMMON [Paquete Common - El Contrato]
+        direction TB
+        IES["IEditorService<br/>(Interfaz RMI)"]:::common
+        ICB["IClientCallback<br/>(Interfaz Push)"]:::common
+        OP["Operation + VectorClock"]:::common
+    end
+
+    subgraph CLIENTE [Pareja A - Cliente]
+        UI[ConsoleUI]:::pairA
+        CImpl[ClientImpl]:::pairA
+        CImpl -.->|Implementa| ICB
+        UI -->|Usa| CImpl
+    end
+
+    subgraph SERVER_CORE [Pareja B - Núcleo Lógico]
+        ESI[EditorServiceImpl]:::pairB
+        DOC["Document<br/>(ReadWriteLock)"]:::pairB
+        VC["VectorClock<br/>(Algoritmo)"]:::pairB
+        
+        ESI -.->|Implementa| IES
+        ESI -->|Usa| DOC
+        ESI -->|Merge/Tick| VC
+    end
+
+    subgraph SERVER_INFRA [Pareja C - Infraestructura]
+        NOT["Notifier<br/>(Lista Clientes + Broadcast)"]:::pairC
+        BULLY["BullyAlgorithm<br/>(Elección Líder)"]:::pairC
+        HB[HeartbeatMonitor]:::pairC
+        STATE["ServerState<br/>(LIDER/BACKUP)"]:::pairC
+    end
+
+    %% Relaciones Principales
+    CLIENTE == RMI Call ==> ESI
+    ESI -- Delega Broadcast --> NOT
+    ESI -- Delega Elección --> BULLY
+    NOT -.->|RMI Callback| CImpl
+    HB -.->|Ping| ESI
+    ESI -- Consulta --> STATE
+
+    %% Leyenda
+    linkStyle 0 stroke:#01579b,stroke-width:3px;
+    linkStyle 3 stroke:#c62828,stroke-width:3px;
+```
