@@ -1,0 +1,88 @@
+package server.core;
+
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+
+// Importaciones de la Pareja C (Infraestructura)
+// Si aún no tenéis estos archivos, comenta estas líneas temporalmente.
+import server.infra.HeartbeatMonitor;
+import server.infra.ServerState;
+
+public class ServerMain {
+
+    /**
+     * Punto de entrada principal.
+     * Ejecución: java server.core.ServerMain <SERVER_ID> <PUERTO_RMI>
+     * Ejemplo:   java server.core.ServerMain 1 1099
+     */
+    public static void main(String[] args) {
+        
+        // 1. VALIDACIÓN DE ARGUMENTOS
+        if (args.length < 2) {
+            System.err.println("Error: Faltan argumentos.");
+            System.err.println("Uso correcto: java server.core.ServerMain <ID> <PUERTO>");
+            System.exit(1);
+        }
+
+        try {
+            int myId = Integer.parseInt(args[0]);
+            int port = Integer.parseInt(args[1]);
+
+            // Truco para evitar problemas de IP en laboratorios o localhost
+            System.setProperty("java.rmi.server.hostname", "localhost");
+
+            System.out.println("=====================================");
+            System.out.println("INICIANDO SERVIDOR [ID: " + myId + "]");
+            System.out.println("=====================================");
+
+            // ---------------------------------------------------------
+            // PASO 1: GESTIÓN DEL RMI REGISTRY
+            // ---------------------------------------------------------
+            Registry registry;
+            try {
+                // Intentamos crear el registro (si somos el primero en arrancar)
+                registry = LocateRegistry.createRegistry(port);
+                System.out.println(" RMI Registry creado en puerto " + port);
+            } catch (Exception e) {
+                // Si falla, es que otro servidor ya lo creó. Nos conectamos a él.
+                registry = LocateRegistry.getRegistry(port);
+                System.out.println(" RMI Registry ya existía. Conectado.");
+            }
+
+            // ---------------------------------------------------------
+            // PASO 2: PUBLICAR EL SERVICIO CORE
+            // ---------------------------------------------------------
+            // Instanciamos la lógica principal (EditorServiceImpl)
+            EditorServiceImpl service = new EditorServiceImpl(myId);
+
+            // Nombre único para este servidor: "Server_1", "Server_2", etc.
+            String serviceName = "Server_" + myId;
+            
+            // Rebind sobrescribe si ya existía (útil si reinicias el proceso)
+            registry.rebind(serviceName, service);
+            System.out.println(" Servicio publicado como: '" + serviceName + "'");
+
+            // ---------------------------------------------------------
+            // PASO 3: INICIAR INFRAESTRUCTURA
+            // ---------------------------------------------------------
+            // Si la Pareja C no ha terminado sus clases, comenta este bloque:
+            
+            // A. Inicializar Estado Global (Empezamos como Backup)
+            // Si el ID es el más alto posible, podrías forzar true, pero mejor esperar al Bully.
+            ServerState.init(myId, false); 
+
+            // B. Arrancar Hilo de Heartbeat (Vigilancia)
+            HeartbeatMonitor monitor = new HeartbeatMonitor(myId, port);
+            new Thread(monitor).start();
+            
+            System.out.println(" Monitor de Heartbeat iniciado.");
+            // ---------------------------------------------------------
+
+            System.out.println(" SERVIDOR LISTO Y ESPERANDO PETICIONES...");
+
+        } catch (Exception e) {
+            System.err.println(" CRITICAL ERROR: El servidor no pudo arrancar.");
+            e.printStackTrace();
+        }
+    }
+}
