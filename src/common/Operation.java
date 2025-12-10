@@ -26,7 +26,7 @@ public class Operation implements Serializable {
     }
 
     // Getters necesarios para que el Servidor pueda leer los datos
-    public boolean getInsert() { return insert; }
+    public boolean isInsert() { return insert; }
     public char getCharacter() { return character; }
     public int getPosition() { return position; }
     public int getUserId() { return userId; }
@@ -34,4 +34,9 @@ public class Operation implements Serializable {
     public VectorClock getClientClock() { 
         return clientClock; 
     }
+
+
+
+
+
 }
