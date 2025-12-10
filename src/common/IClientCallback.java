@@ -14,5 +14,11 @@ public interface IClientCallback extends Remote {
      * @param document El texto completo nuevo.
      * @param serverClock El reloj vectorial del servidor (para que el cliente actualice el suyo).
      */
-    void updateDocument(String document, VectorClock serverClock) throws RemoteException; //antes updateView, cambiado para adaptarme a Notifier
+    void updateDocument(String document, VectorClock serverClock) throws RemoteException; 
+    
+    // Método auxiliar para sincronización inicial (opcional, pero útil)
+    default void syncState(String document) throws RemoteException {
+        // Por defecto redirige a updateDocument con reloj nulo o vacío si no se especifica
+        updateDocument(document, null); 
+    }
 }

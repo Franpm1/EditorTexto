@@ -4,65 +4,67 @@ import common.Operation;
 import common.VectorClock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-//Esta clase protege el StringBuilder y el VectorClock usando locks
-
 public class Document {
-    
+
     private final StringBuilder content;
-    private final VectorClock vectorClock; // Nuestro reloj local
-    private final int myId; // Nuestro ID de servidor
-    
-    // EL SEMÁFORO (ReentrantReadWriteLock)
-    // - writeLock(): Solo deja pasar a UNO a la vez (para escribir).
-    // - readLock(): Deja pasar a muchos a la vez (para leer/enviar a clientes).
+    private final VectorClock vectorClock; // Reloj local del servidor
+    private final int myId; 
+
+    // Semáforo para controlar acceso concurrente
     private final ReentrantReadWriteLock lock; 
 
     public Document(int myId, int totalNodes) {
         this.myId = myId;
         this.content = new StringBuilder();
-        // Inicializamos nuestro reloj a ceros
+        // Usamos el constructor de tamaño fijo definido en common.VectorClock
         this.vectorClock = new VectorClock(totalNodes);
         this.lock = new ReentrantReadWriteLock();
     }
 
     public void applyOperation(Operation op) {
-        //Pedimos permiso exclusivo para escribir
+        // Bloqueo de ESCRITURA: Solo uno pasa a la vez
         lock.writeLock().lock(); 
         try {
-            System.out.println("[Document] Procesando usuario " + op.getUserId() + "...");
+            System.out.println("[Document] Procesando op de Usuario: " + op.getOwner());
 
-            //CAUSALIDAD
-            // 1. Merge: Actualizamos reloj
-            vectorClock.merge(op.getClientClock());
-            // 2. Tick: ha ocurrido un evento
+            // 1. CAUSALIDAD: Merge y Tick
+            if (op.getVectorClock() != null) {
+                vectorClock.merge(op.getVectorClock());
+            }
             vectorClock.tick(myId);
 
-            //GESTIÓN DE ESTADO DEL DOCUMENTO
+            // 2. APLICAR CAMBIOS AL TEXTO
             int pos = op.getPosition();
-            
-            //Comprobaciones de límites
+            String text = op.getText(); // Ahora es String, no char
+
+            // Protección de límites básicos
             if (pos < 0) pos = 0;
             if (pos > content.length()) pos = content.length();
-            //está insertado?true : false
-            if (op.isInsert()) {
-                content.insert(pos, op.getCharacter());
-                System.out.println("Insertado: '" + op.getCharacter() + "' en " + pos);
-            } else {
-                if (pos < content.length()) { //Por si está vacío miro si hay algo
-                    content.deleteCharAt(pos);
-                    System.out.println("🗑️ Borrado en: " + pos);
+
+            if ("INSERT".equalsIgnoreCase(op.getType())) {
+                content.insert(pos, text);
+                System.out.println("   -> Insertado: '" + text + "' en " + pos);
+
+            } else if ("DELETE".equalsIgnoreCase(op.getType())) {
+                // Borramos la longitud del texto que viene en la operación
+                int lengthToDelete = text.length(); 
+                int end = Math.min(pos + lengthToDelete, content.length());
+
+                if (pos < content.length()) {
+                    content.delete(pos, end);
+                    System.out.println("   -> Borrado desde " + pos + " hasta " + end);
                 }
             }
-            
-            System.out.println("Nuevo Reloj Local: " + vectorClock.toString());
-            System.out.println("Texto Actual: " + content.toString());
+
+            System.out.println("   -> Estado Actual: " + content.toString());
+            System.out.println("   -> Nuevo Reloj: " + vectorClock.toString());
 
         } finally {
             lock.writeLock().unlock(); 
         }
     }
 
-    // Lectura segura (permite múltiples lectores simultáneos)
+    // Lectura segura
     public String getContent() {
         lock.readLock().lock();
         try {
@@ -72,31 +74,29 @@ public class Document {
         }
     }
 
-    // Devuelve una copia del reloj actual
     public VectorClock getClockCopy() {
         lock.readLock().lock();
         try {
-            // Usamos el constructor de copia que creamos antes
-            return new VectorClock(vectorClock); 
+            // Usamos el constructor que acepta int[] definido en VectorClock
+            return new VectorClock(vectorClock.getValues()); 
         } finally {
             lock.readLock().unlock();
         }
     }
-    
-    // Cuando recibamos el estado completo de otro servidor (Sync)
+
+    // Usado para sincronización total (Replicación o al convertirse en Líder)
     public void overwriteState(String newContent, VectorClock newClock) {
         lock.writeLock().lock();
         try {
             content.setLength(0);
             content.append(newContent);
-            // Copiamos el reloj remoto al nuestro (Merge total o sobreescritura)
-            // Para simplificar, hacemos merge, aunque un sync suele ser overwrite.
-            // Aquí asumimos overwrite lógico del estado.
-            // Truco: Hacemos un merge para asegurarnos de no ir atrás en el tiempo, 
-            // o simplemente asignamos valores si tuviéramos un setter.
-            // Por simplicidad usaremos merge, que es seguro.
-            vectorClock.merge(newClock); 
-            System.out.println("🔄 Estado sobrescrito/sincronizado.");
+
+            // Actualizamos nuestro reloj para estar sincronizados
+            if (newClock != null) {
+                vectorClock.copyFrom(newClock); 
+            }
+
+            System.out.println(" [SYNC] Estado interno sobrescrito con éxito.");
         } finally {
             lock.writeLock().unlock();
         }

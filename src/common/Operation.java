@@ -3,40 +3,44 @@ package common;
 import java.io.Serializable;
 
 /**
- * Contiene qué tecla se pulsó, dónde, quién fue y el reloj
+ * Contiene qué se escribió, dónde, quién fue y el reloj.
  * Implementa Serializable para poder viajar por RMI.
  */
 public class Operation implements Serializable {
     
-    private static final long serialVersionUID = 1L; //rmi
+    private static final long serialVersionUID = 1L;
 
-
-    private final boolean insert; // true = insertar, false = borrar
-    private final char character;
+    private final String type;      // "INSERT" o "DELETE"
+    private final String text;      // El texto a insertar o borrar
     private final int position;
     private final int userId;       // Quién hizo el cambio
-    private final VectorClock clientClock; // El reloj del cliente en ese momento
+    private final VectorClock vectorClock; // El reloj del cliente
 
-    public Operation(boolean insert, char character, int position, int userId, VectorClock clientClock) {
-        this.insert = insert;
-        this.character = character;
+    // Constructor principal
+    public Operation(String type, String text, int position, int userId, VectorClock vectorClock) {
+        this.type = type;
+        this.text = text;
         this.position = position;
         this.userId = userId;
-        this.clientClock = clientClock; 
+        this.vectorClock = vectorClock; 
     }
 
-    // Getters necesarios para que el Servidor pueda leer los datos
-    public boolean isInsert() { return insert; }
-    public char getCharacter() { return character; }
+    // --- Getters ---
+
+    public String getType() { return type; }
+    public String getText() { return text; }
     public int getPosition() { return position; }
+    
+    // Alias para compatibilidad con Document.java
+    public int getOwner() { return userId; } 
     public int getUserId() { return userId; }
     
-    public VectorClock getClientClock() { 
-        return clientClock; 
+    public VectorClock getVectorClock() { return vectorClock; }
+    // Alias por si usas getClientClock en otro lado
+    public VectorClock getClientClock() { return vectorClock; }
+
+    @Override
+    public String toString() {
+        return "Op[" + type + " '" + text + "' @ " + position + " by User " + userId + "]";
     }
-
-
-
-
-
 }
