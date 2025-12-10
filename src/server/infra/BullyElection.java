@@ -1,132 +1,163 @@
-package server;
+package server.infra;
 
 import common.IEditorService;
+import common.VectorClock;
 
 import java.rmi.RemoteException;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Implementación simplificada del algoritmo Bully. Gestiona procesos de elección,
- * detecta servidores superiores vivos y determina quién debe ser el nuevo líder.
- */
+
 public class BullyElection {
 
-    private final EditorServiceImpl localServer;
-    private final List<RemoteServerInfo> allServers; // La lista incluye al propio servidor
-    private final AtomicInteger currentLeaderId = new AtomicInteger(-1);
+    private final ServerState serverState;
+    private final List<RemoteServerInfo> allServers;
 
-    // Indica si ya se está llevando a cabo un proceso de elección
+    // Referencia al núcleo lógico para poder leer doc + clock cuando yo me convierta en líder.
+    private final EditorDocumentProvider documentProvider;
+
+    // Para evitar elecciones simultáneas locas
     private volatile boolean inElection = false;
 
-    public BullyElection(EditorServiceImpl localServer, List<RemoteServerInfo> allServers, int initialLeaderId) {
-        this.localServer = localServer;
+    /**
+     * Interface mínima que debe implementar el núcleo lógico (EditorServiceImpl)
+     * para que el algoritmo pueda leer el estado y replicarlo.
+     */
+    public interface EditorDocumentProvider {
+        String getDocumentSnapshot() throws RemoteException;
+        VectorClock getClockSnapshot() throws RemoteException;
+
+        /**
+         * Se llama cuando ESTE servidor se convierte en líder,
+         * para que empiece a aceptar peticiones de clientes.
+         */
+        void onBecameLeader();
+    }
+
+    /**
+     * @param serverState Info local (mi ID y si soy líder)
+     * @param allServers  Lista de todos los servidores (incluyéndome)
+     * @param documentProvider Puente hacia EditorServiceImpl
+     */
+    public BullyElection(ServerState serverState,
+                         List<RemoteServerInfo> allServers,
+                         EditorDocumentProvider documentProvider) {
+        this.serverState = serverState;
         this.allServers = allServers;
-        this.currentLeaderId.set(initialLeaderId);
+        this.documentProvider = documentProvider;
     }
 
-    /** Devuelve el ID del líder actual. */
     public int getCurrentLeaderId() {
-        return currentLeaderId.get();
+        return serverState.getCurrentLeaderId();
     }
 
-    /** Devuelve el descriptor del servidor líder actual. */
     public RemoteServerInfo getCurrentLeaderInfo() {
-        int id = currentLeaderId.get();
+        int id = serverState.getCurrentLeaderId();
         for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() == id) return info;
+            if (info.getServerId() == id) {
+                return info;
+            }
         }
         return null;
     }
 
     /**
-     * Inicio oficial del algoritmo Bully. Se ejecuta cuando el heartbeat detecta
-     * que el líder ha caído o cuando no existe un líder conocido.
+     * Inicia la elección según el algoritmo Bully.
+     * Se puede llamar desde HeartbeatMonitor o manualmente en pruebas.
      */
     public synchronized void startElection() {
-        if (inElection) return;
+        if (inElection) {
+            return; // ya hay una elección en marcha
+        }
         inElection = true;
 
-        int myId;
-        try {
-            myId = localServer.getServerId();
-        } catch (RemoteException e) {
-            myId = -1;
-        }
-
-        System.out.println("[Server " + myId + "] Iniciando ELECTION.");
+        int myId = serverState.getMyServerId();
+        System.out.println("[Server " + myId + "] Iniciando ELECCIÓN (Bully).");
 
         boolean higherResponded = false;
 
-        // Consultar servidores con ID superior al mío
+        // Lanzar "mensaje de elección" a todos los servidores con ID > myId
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() <= myId) continue;
 
             try {
                 IEditorService stub = info.getStub();
-                stub.heartbeat(); // Si responde, el servidor superior está vivo
+                // Comprobamos si está vivo con un heartbeat
+                stub.heartbeat();
                 higherResponded = true;
-                System.out.println("[Server " + myId + "] Servidor " + info.getServerId() + " vive y es mayor.");
+                System.out.println("[Server " + myId + "] Servidor " + info.getServerId()
+                        + " responde y tiene ID mayor. Espero que él coordine.");
             } catch (Exception e) {
-                System.out.println("[Server " + myId + "] Servidor " + info + " no responde.");
+                System.out.println("[Server " + myId + "] Servidor " + info.getServerId()
+                        + " no responde en elección.");
             }
         }
 
-        // Si ninguno superior responde → este servidor se convierte en líder
         if (!higherResponded) {
+            // Nadie por encima de mí está vivo → yo seré el nuevo líder
             becomeLeaderAndBroadcast();
         } else {
-            // Esperar un tiempo por si un servidor superior se proclama líder
+            // En una implementación completa esperaríamos un "COORDINATOR".
+            // Para simplificar, esperamos un poco y si nadie ha cerrado la elección,
+            // nos autoproclamamos.
             new Thread(() -> {
-                try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException ignored) {}
 
-                if (inElection) {
-                    System.out.println("[Server " + myId + "] Ningún mayor se proclamó. Me autoproclamo líder.");
-                    becomeLeaderAndBroadcast();
+                synchronized (BullyElection.this) {
+                    if (inElection) {
+                        System.out.println("[Server " + myId + "] Nadie se ha proclamado. Me autoproclamo líder.");
+                        becomeLeaderAndBroadcast();
+                    }
                 }
             }).start();
         }
     }
 
     /**
-     * Proclama a este servidor como líder y notifica a todos los demás enviando
-     * el estado actual del documento.
+     * Acción cuando este servidor decide que es el nuevo líder:
+     *  - actualiza ServerState
+     *  - avisa al núcleo lógico
+     *  - envía estado a los demás servidores
      */
-    private synchronized void becomeLeaderAndBroadcast() {
-        int myId;
-        try {
-            myId = localServer.getServerId();
-        } catch (RemoteException e) {
-            myId = -1;
-        }
-
+    private void becomeLeaderAndBroadcast() {
+        int myId = serverState.getMyServerId();
         System.out.println("[Server " + myId + "] Soy el nuevo LÍDER (Bully).");
 
-        localServer.setLeader(true);
-        currentLeaderId.set(myId);
+        // Actualizar estado local
+        serverState.setLeader(true);
         inElection = false;
 
-        // Enviar snapshot de documento y reloj vectorial
-        String doc;
-        common.VectorClock vc;
-
+        // Avisar al núcleo lógico: a partir de ahora acepta peticiones
         try {
-            doc = localServer.getDocument();
-            vc = localServer.getClock();
-        } catch (RemoteException e) {
-            doc = "";
-            vc = new common.VectorClock();
+            documentProvider.onBecameLeader();
+        } catch (Exception e) {
+            System.err.println("[Server " + myId + "] Error notificando al EditorServiceImpl que soy líder: " + e);
         }
 
-        // Notificar a todos los servidores que hay un nuevo líder
+        // Snapshot del documento y reloj para mandar a los demás
+        String doc;
+        VectorClock clock;
+        try {
+            doc = documentProvider.getDocumentSnapshot();
+            clock = documentProvider.getClockSnapshot();
+        } catch (RemoteException e) {
+            System.err.println("[Server " + myId + "] Error obteniendo estado local al ser líder: " + e);
+            doc = "";
+            clock = new VectorClock(); // mínimo
+        }
+
+        // Notificar a todos los demás servidores
         for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() == myId) continue;
+            if (info.getServerId() == myId) continue; // yo no
 
             try {
                 IEditorService stub = info.getStub();
-                stub.becomeLeader(doc, vc);
+                // becomeLeader en el remoto: se interpreta como "este es el nuevo líder"
+                // y se usa para actualizar su copia del documento.
+                stub.becomeLeader(doc, clock);
             } catch (Exception e) {
-                System.out.println("[Server " + myId + "] Error notificando a " + info);
+                System.out.println("[Server " + myId + "] No pude notificar a " + info + " que soy el nuevo líder.");
             }
         }
     }

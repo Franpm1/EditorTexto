@@ -1,13 +1,16 @@
-package server;
+package server.infra;
 
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
+
 import common.IEditorService;
 
 /**
- * Representa la información necesaria para contactar a otro servidor dentro del
- * sistema distribuido. Incluye host, puerto, nombre de binding RMI y un stub
- * cacheado para evitar búsquedas repetidas en el registro.
+ * Información de otro servidor en el cluster.
+ * La usa Pareja C para:
+ *  - hacer heartbeat()
+ *  - enviar replicación
+ *  - notificar nuevo líder, etc.
  */
 public class RemoteServerInfo {
 
@@ -16,8 +19,7 @@ public class RemoteServerInfo {
     private final int port;
     private final String bindingName;
 
-    // Cache del stub RMI para evitar buscarlo en cada llamada
-    private IEditorService stub;
+    private IEditorService cachedStub;
 
     public RemoteServerInfo(int serverId, String host, int port, String bindingName) {
         this.serverId = serverId;
@@ -26,21 +28,31 @@ public class RemoteServerInfo {
         this.bindingName = bindingName;
     }
 
-    /** Devuelve el ID lógico del servidor. */
     public int getServerId() {
         return serverId;
     }
 
+    public String getHost() {
+        return host;
+    }
+
+    public int getPort() {
+        return port;
+    }
+
+    public String getBindingName() {
+        return bindingName;
+    }
+
     /**
-     * Obtiene el stub remoto asociado a este servidor. Si no se ha obtenido aún,
-     * se recupera del registro RMI y se almacena en cache.
+     * Devuelve el stub RMI del servidor remoto (con cache).
      */
     public synchronized IEditorService getStub() throws Exception {
-        if (stub == null) {
+        if (cachedStub == null) {
             Registry registry = LocateRegistry.getRegistry(host, port);
-            stub = (IEditorService) registry.lookup(bindingName);
+            cachedStub = (IEditorService) registry.lookup(bindingName);
         }
-        return stub;
+        return cachedStub;
     }
 
     @Override

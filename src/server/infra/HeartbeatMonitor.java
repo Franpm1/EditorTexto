@@ -1,72 +1,69 @@
-package server;
+package server.infra;
 
 import common.IEditorService;
 
 /**
- * Hilo encargado de comprobar periódicamente si el líder está vivo mediante
- * heartbeats. Si el líder no responde, se inicia automáticamente una elección
- * utilizando BullyElection.
+ * Hilo de INFRAESTRUCTURA que vigila al líder mediante heartbeats.
+ *
+ * Funciona así:
+ *  - Si este servidor es BACKUP:
+ *      - cada X ms hace ping (heartbeat()) al líder actual.
+ *      - si falla, lanza el BullyAlgorithm (startElection()).
+ *  - Si este servidor es LÍDER:
+ *      - no hace nada (no se pinge a sí mismo).
  */
 public class HeartbeatMonitor implements Runnable {
 
-    private final EditorServiceImpl localServer;
+    private final ServerState serverState;
+    private final BullyElection bullyElection;
     private final long intervalMillis;
-    private final BullyElection election;
 
     private volatile boolean running = true;
 
-    public HeartbeatMonitor(EditorServiceImpl localServer, long intervalMillis, BullyElection election) {
-        this.localServer = localServer;
+    public HeartbeatMonitor(ServerState serverState,
+                            BullyElection bullyElection,
+                            long intervalMillis) {
+        this.serverState = serverState;
+        this.bullyElection = bullyElection;
         this.intervalMillis = intervalMillis;
-        this.election = election;
     }
 
-    /** Permite detener el hilo de heartbeat. */
     public void stop() {
         running = false;
     }
 
     @Override
     public void run() {
-        System.out.println("[Server " + getIdSafe() + "] Heartbeat iniciado.");
+        int myId = serverState.getMyServerId();
+        System.out.println("[Server " + myId + "] HeartbeatMonitor iniciado.");
 
         while (running) {
             try {
                 Thread.sleep(intervalMillis);
-            } catch (InterruptedException ignored) {}
+            } catch (InterruptedException ignored) {
+            }
 
-            // Si es líder, no se realiza heartbeats a nadie
-            if (localServer.isLeader()) {
+            // Si soy líder, no necesito hacer ping a nadie
+            if (serverState.isLeader()) {
                 continue;
             }
 
-            // Preguntar al módulo de elección quién es el líder actual
-            RemoteServerInfo leaderInfo = election.getCurrentLeaderInfo();
-
-            // Si no hay líder conocido, se inicia una elección
+            RemoteServerInfo leaderInfo = bullyElection.getCurrentLeaderInfo();
             if (leaderInfo == null) {
-                System.out.println("[Server " + getIdSafe() + "] No hay líder conocido. Inicio elección.");
-                election.startElection();
+                // No sabemos quién es el líder → iniciar elección
+                System.out.println("[Server " + myId + "] No hay líder conocido. Inicio elección.");
+                bullyElection.startElection();
                 continue;
             }
 
-            // Intentar hacer ping al líder
             try {
                 IEditorService leaderStub = leaderInfo.getStub();
-                leaderStub.heartbeat();  // Si responde, el líder está vivo
+                leaderStub.heartbeat(); // si lanza excepción, el líder ha caído
+                // System.out.println("[Server " + myId + "] Líder " + leaderInfo.getServerId() + " OK.");
             } catch (Exception e) {
-                System.out.println("[Server " + getIdSafe() + "] Líder " + leaderInfo + " NO responde. Inicio Bully.");
-                election.startElection();
+                System.out.println("[Server " + myId + "] Líder " + leaderInfo + " NO responde. Inicio Bully.");
+                bullyElection.startElection();
             }
-        }
-    }
-
-    /** Devuelve un ID seguro incluso si hay excepciones remotas. */
-    private int getIdSafe() {
-        try {
-            return localServer.getServerId();
-        } catch (Exception e) {
-            return -1;
         }
     }
 }
