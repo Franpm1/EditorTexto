@@ -5,13 +5,6 @@ import java.rmi.registry.Registry;
 
 import common.IEditorService;
 
-/**
- * Información de otro servidor en el cluster.
- * La usa Pareja C para:
- *  - hacer heartbeat()
- *  - enviar replicación
- *  - notificar nuevo líder, etc.
- */
 public class RemoteServerInfo {
 
     private final int serverId;
@@ -32,21 +25,6 @@ public class RemoteServerInfo {
         return serverId;
     }
 
-    public String getHost() {
-        return host;
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    public String getBindingName() {
-        return bindingName;
-    }
-
-    /**
-     * Devuelve el stub RMI del servidor remoto (con cache).
-     */
     public synchronized IEditorService getStub() throws Exception {
         if (cachedStub == null) {
             Registry registry = LocateRegistry.getRegistry(host, port);

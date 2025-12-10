@@ -2,16 +2,7 @@ package server.infra;
 
 import common.IEditorService;
 
-/**
- * Hilo de INFRAESTRUCTURA que vigila al líder mediante heartbeats.
- *
- * Funciona así:
- *  - Si este servidor es BACKUP:
- *      - cada X ms hace ping (heartbeat()) al líder actual.
- *      - si falla, lanza el BullyAlgorithm (startElection()).
- *  - Si este servidor es LÍDER:
- *      - no hace nada (no se pinge a sí mismo).
- */
+
 public class HeartbeatMonitor implements Runnable {
 
     private final ServerState serverState;
@@ -40,29 +31,26 @@ public class HeartbeatMonitor implements Runnable {
         while (running) {
             try {
                 Thread.sleep(intervalMillis);
-            } catch (InterruptedException ignored) {
-            }
+            } catch (InterruptedException ignored) {}
 
-            // Si soy líder, no necesito hacer ping a nadie
             if (serverState.isLeader()) {
+                // Si soy líder no me vigilo a mí mismo
                 continue;
             }
 
             RemoteServerInfo leaderInfo = bullyElection.getCurrentLeaderInfo();
             if (leaderInfo == null) {
-                // No sabemos quién es el líder → iniciar elección
                 System.out.println("[Server " + myId + "] No hay líder conocido. Inicio elección.");
-                bullyElection.startElection();
+                bullyElection.startLocalElection();
                 continue;
             }
 
             try {
                 IEditorService leaderStub = leaderInfo.getStub();
-                leaderStub.heartbeat(); // si lanza excepción, el líder ha caído
-                // System.out.println("[Server " + myId + "] Líder " + leaderInfo.getServerId() + " OK.");
+                leaderStub.ping();   // <-- AQUÍ USAMOS TU ping()
             } catch (Exception e) {
-                System.out.println("[Server " + myId + "] Líder " + leaderInfo + " NO responde. Inicio Bully.");
-                bullyElection.startElection();
+                System.out.println("[Server " + myId + "] El líder " + leaderInfo + " NO responde. Inicio Bully.");
+                bullyElection.startLocalElection();
             }
         }
     }

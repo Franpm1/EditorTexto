@@ -5,10 +5,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Mantiene el estado de este servidor en el cluster:
- * - si es LÍDER o BACKUP
- * - qué ID de servidor es el líder actual conocido.
- *
- * Esta clase es parte de la INFRAESTRUCTURA (Pareja C).
+ *  - si es LÍDER o BACKUP
+ *  - qué ID de servidor es el líder actual conocido.
  */
 public class ServerState {
 
@@ -34,10 +32,6 @@ public class ServerState {
         return isLeader.get();
     }
 
-    /**
-     * Cambia este servidor a LÍDER o BACKUP.
-     * Normalmente lo invoca el BullyAlgorithm.
-     */
     public void setLeader(boolean leader) {
         isLeader.set(leader);
         if (leader) {

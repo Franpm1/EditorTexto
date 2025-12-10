@@ -9,18 +9,9 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
-/**
- * Notificador / Broadcast.
- *
- * Responsabilidades (Pareja C):
- *  - Mantiene la lista de clientes conectados.
- *  - Hace broadcast del documento + vector clock a todos los clientes.
- *
- * El núcleo (EditorServiceImpl, Pareja B) delega aquí el broadcast.
- */
+
 public class Notifier {
 
-    // Lista sincronizada de callbacks de cliente
     private final List<IClientCallback> clients =
             Collections.synchronizedList(new ArrayList<>());
 
@@ -32,11 +23,12 @@ public class Notifier {
         this.serverState = serverState;
     }
 
-    public void registerClient(IClientCallback client, String initialDocument, VectorClock initialClock) {
+    public void registerClient(IClientCallback client,
+                               String initialDocument,
+                               VectorClock initialClock) {
         clients.add(client);
         System.out.println("[Server " + myServerId + "] Cliente registrado. Total: " + clients.size());
 
-        // Enviamos el estado actual nada más conectarse
         try {
             client.updateDocument(initialDocument, initialClock);
         } catch (RemoteException e) {
@@ -53,14 +45,9 @@ public class Notifier {
     /**
      * Envía el documento y vector clock actuales a todos los clientes.
      * Sólo se ejecuta si este servidor es LÍDER.
-     *
-     * El núcleo (B) debe pasar un snapshot: (document, clock).
      */
     public void broadcast(String documentSnapshot, VectorClock clockSnapshot) {
-        if (!serverState.isLeader()) {
-            // Sólo el líder envia actualizaciones a los clientes
-            return;
-        }
+        if (!serverState.isLeader()) return;
 
         synchronized (clients) {
             Iterator<IClientCallback> it = clients.iterator();
@@ -69,17 +56,10 @@ public class Notifier {
                 try {
                     client.updateDocument(documentSnapshot, clockSnapshot);
                 } catch (RemoteException e) {
-                    System.out.println("[Server " + myServerId + "] Cliente no responde, lo elimino de la lista.");
+                    System.out.println("[Server " + myServerId + "] Cliente no responde, lo elimino.");
                     it.remove();
                 }
             }
         }
-    }
-
-    /**
-     * Devuelve el número de clientes registrados (para logs, debugging…).
-     */
-    public int getClientCount() {
-        return clients.size();
     }
 }
