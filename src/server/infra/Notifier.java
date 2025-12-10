@@ -9,10 +9,6 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
-/**
- * Notificador (Pareja C)
- * Envía el estado del documento y el VectorClock a los clientes.
- */
 public class Notifier {
 
     private final List<IClientCallback> clients =
@@ -26,38 +22,32 @@ public class Notifier {
         this.serverState = serverState;
     }
 
-    public void registerClient(IClientCallback client,
-                               String docSnapshot,
-                               VectorClock clockSnapshot) {
+    // CORRECCIÓN: Ajustado para coincidir con la llamada en EditorServiceImpl
+    public void registerClient(IClientCallback client, String username) {
         clients.add(client);
-        System.out.println("[Server " + myServerId + "] Cliente registrado (" + clients.size() + ")");
-
-        try {
-            client.syncState(docSnapshot, clockSnapshot);
-        } catch (RemoteException e) {
-            System.err.println("[Server " + myServerId + "] Error inicial syncState: " + e);
-            clients.remove(client);
-        }
+        System.out.println("[Server " + myServerId + "] Cliente registrado: " + username + " (Total: " + clients.size() + ")");
+        
+        // NOTA: La sincronización inicial (syncState) la hace EditorServiceImpl,
+        // así que no hace falta hacerla aquí.
     }
 
     public void unregisterClient(IClientCallback client) {
         clients.remove(client);
     }
 
-    /**
-     * Envía el documento y el reloj a TODOS los clientes conectados.
-     */
     public void broadcast(String documentSnapshot, VectorClock clockSnapshot) {
-        if (!serverState.isLeader()) return;
+        // Solo el líder notifica a los clientes para evitar mensajes duplicados
+        // o estados inconsistentes si un backup va con retraso.
+        if (!serverState.isLeader()) return; 
 
         synchronized (clients) {
             Iterator<IClientCallback> it = clients.iterator();
             while (it.hasNext()) {
                 IClientCallback client = it.next();
                 try {
-                    client.syncState(documentSnapshot, clockSnapshot);
+                    client.updateDocument(documentSnapshot, clockSnapshot);
                 } catch (RemoteException e) {
-                    System.out.println("[Server " + myServerId + "] Cliente no responde, eliminado");
+                    System.out.println("[Server " + myServerId + "] Cliente no responde, eliminado.");
                     it.remove();
                 }
             }
