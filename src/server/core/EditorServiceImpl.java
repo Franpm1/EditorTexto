@@ -1,77 +1,87 @@
 package server.core;
 
-import common.IEditorService;
-import common.IClientCallback;
-import common.Operation;
-import common.VectorClock;
-import server.infra.BullyElection;
-import server.infra.Notifier;
-
+import common.*;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
+import server.infra.*;
 
-/**
- * Implementa RMI (IEditorService) y también el proveedor de datos para Bully.
- */
-public class EditorServiceImpl extends UnicastRemoteObject 
-        implements IEditorService, BullyElection.EditorDocumentProvider {
+public class EditorServiceImpl extends UnicastRemoteObject implements IEditorService {
 
     private final Document document;
     private final Notifier notifier;
-    private final int myId;
+    private IServerConnector backupConnector;
+    private final ServerState serverState;
 
-    public EditorServiceImpl(int myId, Document doc, Notifier notifier) throws RemoteException {
+    public EditorServiceImpl(Document doc, Notifier notifier, ServerState state) throws RemoteException {
         super();
-        this.myId = myId;
         this.document = doc;
         this.notifier = notifier;
+        this.serverState = state;
+    }
+    
+    public void setBackupConnector(IServerConnector sc) { 
+        this.backupConnector = sc; 
     }
 
-    // --- LÓGICA RMI (CLIENTES) ---
-
     @Override
-    public void writeOperation(Operation op) throws RemoteException {
-        //Aplicar lógica de negocio (concurrencia y relojes)
+    public void executeOperation(Operation op) throws RemoteException {
+        System.out.println(" Operación recibida: " + op.getType() + " de " + op.getOwner());
+        
+        // 1. Aplicar la operación al documento local
         document.applyOperation(op);
-
-        //Difundir cambios
-        //Notifier pide snapshot para enviar a todos
-        notifier.broadcast(document.getContent(), document.getClockCopy());
+        
+        // 2. Solo si soy líder, notificar a todos los clientes
+        if (serverState.isLeader()) {
+            System.out.println("👑 Soy líder, haciendo broadcast...");
+            notifier.broadcast(document.getContent(), document.getClockCopy());
+            
+            // 3. Replicar a backups (otros servidores)
+            if (backupConnector != null) {
+                backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
+            }
+        } else {
+            System.out.println(" No soy líder, solo aplicando localmente");
+            // Como no-líder, también debemos notificar a nuestros clientes locales
+            notifier.broadcast(document.getContent(), document.getClockCopy());
+        }
     }
 
     @Override
-    public void registerClient(IClientCallback client) throws RemoteException {
-        //pasa el estado inicial
-        notifier.registerClient(client, document.getContent(), document.getClockCopy());
+    public void registerClient(IClientCallback client, String username) throws RemoteException {
+        System.out.println(" Registrando cliente: " + username);
+        notifier.registerClient(client);
+        
+        // Enviar estado actual inmediatamente
+        client.syncState(document.getContent(), document.getClockCopy());
     }
-
-    // --- LÓGICA RMI (INFRAESTRUCTURA) ---
 
     @Override
     public void heartbeat() throws RemoteException {
-        //¿¿Estoy vivo??
+        // Simple respuesta de que estoy vivo
     }
 
     @Override
-    public void becomeLeader(String fullDocument, VectorClock newClock) throws RemoteException {
-        System.out.println("[RMI] Recibido mandato de nuevo LÍDER. Sincronizando estado...");
-        document.overwriteState(fullDocument, newClock);
-    }
-
-    // --- INTERFAZ INTERNA PARA BULLY (EditorDocumentProvider) ---
-    // Esto permite que el algoritmo de elección lea nuestros datos sin romper el encapsulamiento
-
-    @Override
-    public String getDocumentSnapshot() {
-        return document.getContent();
+    public void becomeLeader(String doc, VectorClock clock) throws RemoteException {
+        System.out.println(" Recibiendo traspaso de liderazgo...");
+        document.overwriteState(doc, clock);
+        serverState.setLeader(true);
+        serverState.setCurrentLeaderId(serverState.getMyServerId());
+        System.out.println(" Ahora soy el líder.");
     }
 
     @Override
-    public VectorClock getClockSnapshot() {
-        return document.getClockCopy();
+    public void declareLeader(int leaderId) throws RemoteException {
+        System.out.println(" Servidor " + leaderId + " se ha declarado LÍDER.");
+        serverState.setCurrentLeaderId(leaderId);
+        serverState.setLeader(leaderId == serverState.getMyServerId());
     }
 
     @Override
-    public void onBecameLeader() {
-        System.out.println("[CORE] ¡Soy el nuevo LÍDER! Aceptando escrituras.");    }
+    public void applyReplication(String doc, VectorClock clock) throws RemoteException {
+        System.out.println(" Replicación recibida del líder");
+        document.overwriteState(doc, clock);
+        
+        // Notificar a nuestros clientes locales del cambio
+        notifier.broadcast(document.getContent(), document.getClockCopy());
+    }
 }

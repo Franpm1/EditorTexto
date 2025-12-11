@@ -2,41 +2,26 @@ package common;
 
 import java.io.Serializable;
 
-/**
- * Contiene qué tecla se pulsó, dónde, quién fue y el reloj
- * Implementa Serializable para poder viajar por RMI.
- */
 public class Operation implements Serializable {
-    
-    private static final long serialVersionUID = 1L; //rmi
+    private static final long serialVersionUID = 1L;
 
-
-    private final boolean insert; // true = insertar, false = borrar
-    private final char character;
+    private final String type; // "INSERT" o "DELETE"
     private final int position;
-    private final int userId;       // Quién hizo el cambio
-    private final VectorClock clientClock; // El reloj del cliente en ese momento
+    private final String text; // Texto a insertar o texto dummy para longitud de borrado
+    private final String owner;
+    private final VectorClock vectorClock;
 
-    public Operation(boolean insert, char character, int position, int userId, VectorClock clientClock) {
-        this.insert = insert;
-        this.character = character;
+    public Operation(String type, int position, String text, String owner, VectorClock vectorClock) {
+        this.type = type;
         this.position = position;
-        this.userId = userId;
-        this.clientClock = clientClock; 
+        this.text = text;
+        this.owner = owner;
+        this.vectorClock = vectorClock;
     }
 
-    // Getters necesarios para que el Servidor pueda leer los datos
-    public boolean isInsert() { return insert; }
-    public char getCharacter() { return character; }
+    public String getType() { return type; }
     public int getPosition() { return position; }
-    public int getUserId() { return userId; }
-    
-    public VectorClock getClientClock() { 
-        return clientClock; 
-    }
-
-
-
-
-
+    public String getText() { return text; }
+    public String getOwner() { return owner; }
+    public VectorClock getVectorClock() { return vectorClock; }
 }

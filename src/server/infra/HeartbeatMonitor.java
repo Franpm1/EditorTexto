@@ -1,54 +1,43 @@
 package server.infra;
 
-import common.IEditorService;
-
-/**
- * Hilo que vigila al líder.
- * Si heartbeat() falla -> inicia elección local en BullyElection.
- */
 public class HeartbeatMonitor implements Runnable {
-
     private final ServerState serverState;
-    private final BullyElection bullyElection;
+    private final BullyElection bully;
     private final long intervalMs;
-    private volatile boolean running = true;
+    private boolean initialized = false;
 
-    public HeartbeatMonitor(ServerState serverState,
-                            BullyElection bullyElection,
-                            long intervalMs) {
-        this.serverState = serverState;
-        this.bullyElection = bullyElection;
-        this.intervalMs = intervalMs;
-    }
-
-    public void stop() {
-        running = false;
+    public HeartbeatMonitor(ServerState state, BullyElection bully, long interval) {
+        this.serverState = state;
+        this.bully = bully;
+        this.intervalMs = interval;
     }
 
     @Override
     public void run() {
-
-        while (running) {
-            try { Thread.sleep(intervalMs); }
-            catch (InterruptedException ignored) {}
-
-            // Soy líder -> no hago heartbeat
+        System.out.println("Monitor iniciado. Esperando 10s para estabilización...");
+        try { Thread.sleep(10000); } catch (InterruptedException e) {}
+        System.out.println("Monitor activo. Comprobando líder...");
+        
+        while (true) {
+            try { Thread.sleep(intervalMs); } catch (InterruptedException e) {}
+            
             if (serverState.isLeader()) continue;
 
-            RemoteServerInfo leaderInfo = bullyElection.getCurrentLeaderInfo();
-
-            // No se conoce líder (por ejemplo al inicio)
-            if (leaderInfo == null) {
-                bullyElection.onLeaderDown();
+            RemoteServerInfo leader = bully.getCurrentLeaderInfo();
+            if (leader == null) {
+                System.out.println("No se conoce líder. Iniciando elección...");
+                bully.onLeaderDown();
                 continue;
             }
-
+            
             try {
-                IEditorService stub = leaderInfo.getStub();
-                stub.heartbeat(); // <----------- ahora heartbeat()
-            } catch(Exception e) {
-                System.out.println("[Heartbeat] Líder no responde -> elección");
-                bullyElection.onLeaderDown();
+                leader.getStub().heartbeat();
+                System.out.println("Lider " + leader.getServerId() + " responde");
+            } catch (Exception e) {
+                System.out.println("Lider " + leader.getServerId() + " NO responde");
+                // FIX CRÍTICO: Resetear el ID del líder antes de elección
+                serverState.setCurrentLeaderId(-1);
+                bully.onLeaderDown();
             }
         }
     }

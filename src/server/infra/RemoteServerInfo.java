@@ -1,18 +1,14 @@
 package server.infra;
 
+import common.IEditorService;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
-import common.IEditorService;
-
 public class RemoteServerInfo {
-
     private final int serverId;
     private final String host;
     private final int port;
     private final String bindingName;
-
-    private IEditorService cachedStub;
 
     public RemoteServerInfo(int serverId, String host, int port, String bindingName) {
         this.serverId = serverId;
@@ -20,21 +16,11 @@ public class RemoteServerInfo {
         this.port = port;
         this.bindingName = bindingName;
     }
-
-    public int getServerId() {
-        return serverId;
-    }
-
-    public synchronized IEditorService getStub() throws Exception {
-        if (cachedStub == null) {
-            Registry registry = LocateRegistry.getRegistry(host, port);
-            cachedStub = (IEditorService) registry.lookup(bindingName);
-        }
-        return cachedStub;
-    }
-
-    @Override
-    public String toString() {
-        return "Server[" + serverId + "@" + host + ":" + port + "/" + bindingName + "]";
+    
+    public int getServerId() { return serverId; }
+    
+    public IEditorService getStub() throws Exception {
+        Registry registry = LocateRegistry.getRegistry(host, port);
+        return (IEditorService) registry.lookup(bindingName);
     }
 }
