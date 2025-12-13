@@ -23,4 +23,10 @@ public class RemoteServerInfo {
         Registry registry = LocateRegistry.getRegistry(host, port);
         return (IEditorService) registry.lookup(bindingName);
     }
+    
+    // Para depuración
+    @Override
+    public String toString() {
+        return "Server " + serverId + " @ " + host + ":" + port;
+    }
 }
