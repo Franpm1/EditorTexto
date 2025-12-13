@@ -13,4 +13,5 @@ public interface IEditorService extends Remote {
     void applyReplication(String doc, VectorClock clock) throws RemoteException;
     void declareLeader(int leaderId) throws RemoteException;
     void becomeLeader(String doc, VectorClock clock) throws RemoteException; 
+    DocumentSnapshot getCurrentState() throws RemoteException; //para recibir el estado al arrancar un servidor
 }

@@ -41,6 +41,35 @@ public class VectorClock implements Serializable {
             this.vector[i] = other.vector[i];
         }
     }
+    //Método para evitar que un líder nuevo formatee el documento comprobando cada elemento del vector
+    //Por qué hago esto si puedo hacer un merge? Porque el merge no me dice si soy más nuevo o no, solo actualiza,
+    //y yo necesito saber si soy más nuevo sin actualizarlo para copiar lo que hay en el documento!!
+    public boolean isNewer(VectorClock other) {
+        if (other == null) return true; //Soy el único, el más nuevo
+        
+        boolean someoneIsGreater = false; 
+        int len = Math.min(this.vector.length, other.vector.length); //Evitar salir de rango de memoria
+        
+        for (int i = 0; i < len; i++) {
+            if (this.vector[i] < other.vector[i]) {
+                //relojes vectoriales, si algún componente es menor, no soy el más nuevo/actualizado
+                return false; 
+            }
+            if (this.vector[i] > other.vector[i]) {
+                someoneIsGreater = true;
+            }
+        }
+        // Soy posterior si todos mis componentes son >= y al menos uno es >
+        return someoneIsGreater;
+    }
+    
+    public boolean isZero() { //
+        for (int val : vector) {
+            if (val > 0) return false;
+        }
+        return true;
+    }
+
 
     @Override
     public String toString() {

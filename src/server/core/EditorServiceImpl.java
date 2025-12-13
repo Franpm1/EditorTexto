@@ -120,4 +120,9 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         // 2. Broadcast a mis clientes locales (IMPORTANTE: backups también notifican)
         notifier.broadcast(document.getContent(), document.getClockCopy());
     }
+
+    @Override
+    public DocumentSnapshot getCurrentState() throws RemoteException {
+        return new DocumentSnapshot(document.getContent(), document.getClockCopy());
+    }
 }

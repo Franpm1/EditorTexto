@@ -4,6 +4,8 @@ import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.util.ArrayList;
 import java.util.List;
+import common.DocumentSnapshot; 
+import common.IEditorService;
 import server.infra.*;
 
 public class ServerMain {
@@ -65,18 +67,51 @@ public class ServerMain {
             registry.rebind("EditorService", service);
             System.out.println("Servicio publicado como 'EditorService'");
 
-            // 7. Iniciar sistema de elección y heartbeat
-            if (totalNodes > 1) {
-                try {
-                    BullyElection bully = new BullyElection(state, allServers, service);
-                    new Thread(new HeartbeatMonitor(state, bully, 2000)).start();
-                    System.out.println("Monitor de latidos iniciado (intervalo: 2s)");
-                } catch (Exception e) {
-                    System.err.println("Error iniciando monitor: " + e.getMessage());
+
+            // 7. Sincronizar estado inicial por si existe una desconexión previa
+            if (allServers.size() > 1) {
+                System.out.println("\n--> Verificando relojes con el clúster...");
+                
+                for (RemoteServerInfo info : allServers) {
+                    if (info.getServerId() == myId) continue;
+                    try {
+                        IEditorService remote = info.getStub();
+                        DocumentSnapshot snapshot = remote.getCurrentState();
+                        
+                        common.VectorClock myClock = document.getClockCopy();
+                        common.VectorClock remoteClock = snapshot.getClock();
+                        
+                        // Si el remoto es "futuro" respecto a mí, o yo estoy a cero
+                        if (remoteClock.isNewer(myClock) || (myClock.isZero() && !remoteClock.isZero())) {
+                            System.out.println(" Detectado estado más avanzado en Servidor " + info.getServerId());
+                            System.out.println(" Sincronizando datos...");
+                            document.overwriteState(snapshot.getContent(), snapshot.getClock());
+                            System.out.println(" Sincronización completada.");
+                            break; // Ya tenemos datos válidos
+                        }
+                    } catch (Exception e) { /* Ignorar caídos */ }
                 }
+                System.out.println("--> Verificación terminada.\n");
             }
 
-            // 8. Mostrar resumen
+            // 8. Iniciar elección de líder y monitor de latidos
+            if (allServers.size() > 1) {
+                try {
+                    BullyElection bully = new BullyElection(state, allServers, service);
+                    Thread.sleep(1000); 
+                    new Thread(new HeartbeatMonitor(state, bully, 2000)).start();
+                    System.out.println("Monitor de latidos iniciado (2s).");
+                } catch (Exception e) {
+                    System.err.println("Error monitor: " + e.getMessage());
+                }
+            } else {
+                state.setLeader(true);
+                state.setCurrentLeaderId(myId);
+                System.out.println("Líder automático (único nodo).");
+            }
+
+
+            // 9. Mostrar resumen
             System.out.println("\n" + "=".repeat(60));
             System.out.println("SERVIDOR " + myId + " LISTO");
             System.out.println("=".repeat(60));
