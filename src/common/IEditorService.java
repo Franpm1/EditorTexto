@@ -13,4 +13,7 @@ public interface IEditorService extends Remote {
     void applyReplication(String doc, VectorClock clock) throws RemoteException;
     void declareLeader(int leaderId) throws RemoteException;
     void becomeLeader(String doc, VectorClock clock) throws RemoteException; 
+    
+    // NUEVO: Para sincronización cuando un líder se recupera
+    DocumentSnapshot getCurrentState() throws RemoteException;
 }
