@@ -4,7 +4,7 @@ public class HeartbeatMonitor implements Runnable {
     private final ServerState serverState;
     private final BullyElection bully;
     private final long intervalMs;
-    private boolean initialized = false;
+    private boolean electionDone = false;
 
     public HeartbeatMonitor(ServerState state, BullyElection bully, long interval) {
         this.serverState = state;
@@ -14,11 +14,15 @@ public class HeartbeatMonitor implements Runnable {
 
     @Override
     public void run() {
-        // ESPERAR MÁS PARA 6 SERVIDORES
-        System.out.println("Monitor iniciado. Esperando 15s para estabilización..."); // 15s en lugar de 10s
-        try { Thread.sleep(15000); } catch (InterruptedException e) {}
-        System.out.println("Monitor activo. Comprobando líder...");
+        System.out.println("Monitor iniciado. Buscando líder...");
         
+        // 1. ELECCIÓN INMEDIATA al iniciar
+        if (!serverState.isLeader()) {
+            System.out.println("Iniciando elección al arrancar...");
+            bully.startElectionOnStartup();
+        }
+        
+        // 2. Monitoreo periódico
         while (true) {
             try { Thread.sleep(intervalMs); } catch (InterruptedException e) {}
             
@@ -26,16 +30,16 @@ public class HeartbeatMonitor implements Runnable {
 
             RemoteServerInfo leader = bully.getCurrentLeaderInfo();
             if (leader == null) {
-                System.out.println("No se conoce líder. Iniciando elección...");
+                System.out.println("No hay líder conocido. Reiniciando elección...");
                 bully.onLeaderDown();
                 continue;
             }
             
             try {
                 leader.getStub().heartbeat();
-                System.out.println("Lider " + leader.getServerId() + " responde");
+                System.out.println("Líder " + leader.getServerId() + " responde");
             } catch (Exception e) {
-                System.out.println("Lider " + leader.getServerId() + " NO responde");
+                System.out.println("Líder " + leader.getServerId() + " NO responde");
                 serverState.setCurrentLeaderId(-1);
                 bully.onLeaderDown();
             }

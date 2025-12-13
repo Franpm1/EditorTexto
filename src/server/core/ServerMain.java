@@ -20,7 +20,7 @@ public class ServerMain {
 
             int myId = Integer.parseInt(args[0]);
             int port = Integer.parseInt(args[1]);
-            int totalNodes = (args.length > 2) ? Integer.parseInt(args[2]) : 6; // CAMBIADO a 6
+            int totalNodes = (args.length > 2) ? Integer.parseInt(args[2]) : 6;
 
             System.out.println("\n" + "=".repeat(60));
             System.out.println("INICIANDO SERVIDOR " + myId);
@@ -32,19 +32,19 @@ public class ServerMain {
             // 1. Lista de todos los servidores (0-5)
             List<RemoteServerInfo> allServers = new ArrayList<>();
             for (int i = 0; i < totalNodes; i++) {
-                int serverPort = 1099 + i; // Puertos: 1099-1104
+                int serverPort = 1099 + i;
                 allServers.add(new RemoteServerInfo(i, "127.0.0.1", serverPort, "EditorService"));
                 System.out.println("   - Servidor " + i + " en puerto " + serverPort);
             }
 
-            // 2. Estado inicial (solo el servidor 0 es líder inicial)
-            boolean isInitialLeader = (myId == 0);
+            // 2. CAMBIO: Nadie es líder inicial, se elegirá automáticamente
+            boolean isInitialLeader = false; // Importante: false para todos
             ServerState state = new ServerState(myId, isInitialLeader);
-            System.out.println("Lider inicial: " + (isInitialLeader ? "ESTE SERVIDOR" : "Servidor 0"));
+            System.out.println("Lider: se elegira automaticamente (mayor ID presente)");
 
             // 3. Componentes del sistema
             Notifier notifier = new Notifier(state);
-            Document document = new Document(myId, totalNodes); // IMPORTANTE: totalNodes para VectorClock
+            Document document = new Document(myId, totalNodes);
             EditorServiceImpl service = new EditorServiceImpl(document, notifier, state);
             
             // 4. Conector para replicación
@@ -74,6 +74,11 @@ public class ServerMain {
                 } catch (Exception e) {
                     System.err.println("Error iniciando monitor: " + e.getMessage());
                 }
+            } else {
+                // Si solo hay 1 nodo, es automáticamente líder
+                state.setLeader(true);
+                state.setCurrentLeaderId(myId);
+                System.out.println("Unico nodo, soy lider automaticamente");
             }
 
             // 8. Mostrar resumen
