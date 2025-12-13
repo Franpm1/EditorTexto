@@ -1,92 +1,82 @@
 package server.core;
 
+import server.infra.*;
+
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.util.ArrayList;
 import java.util.List;
-import server.infra.*;
 
 public class ServerMain {
-    public static void main(String[] args) {
-        if (args.length < 2) {
-            System.out.println("Uso: java server.core.ServerMain <ID> <PORT> [NODES]");
-            System.out.println("Ejemplo: java server.core.ServerMain 0 1099 6");
-            return;
-        }
 
+    public static void main(String[] args) {
         try {
-            System.setProperty("java.net.preferIPv4Stack", "true");
-            System.setProperty("java.rmi.server.hostname", "127.0.0.1");
+            if (args.length < 3) {
+                System.out.println("Uso: java server.core.ServerMain <myId> <port> <totalNodes>");
+                return;
+            }
 
             int myId = Integer.parseInt(args[0]);
             int port = Integer.parseInt(args[1]);
-            int totalNodes = (args.length > 2) ? Integer.parseInt(args[2]) : 6; // CAMBIADO a 6
+            int totalNodes = Integer.parseInt(args[2]);
 
-            System.out.println("\n" + "=".repeat(60));
-            System.out.println("INICIANDO SERVIDOR " + myId);
-            System.out.println("=".repeat(60));
-            System.out.println("Puerto: " + port);
-            System.out.println("ID: " + myId);
-            System.out.println("Nodos totales: " + totalNodes);
+            // Estado
+            ServerState state = new ServerState(myId, false);
 
-            // 1. Lista de todos los servidores (0-5)
-            List<RemoteServerInfo> allServers = new ArrayList<>();
-            for (int i = 0; i < totalNodes; i++) {
-                int serverPort = 1099 + i; // Puertos: 1099-1104
-                allServers.add(new RemoteServerInfo(i, "127.0.0.1", serverPort, "EditorService"));
-                System.out.println("   - Servidor " + i + " en puerto " + serverPort);
+            // Inicialmente podéis poner 0 si sabéis que 0 arranca como líder;
+            // si queréis elección al arrancar, dejad -1.
+            state.setCurrentLeaderId(0);
+
+            // Document con persistencia pro
+            Document document = new Document(myId, totalNodes);
+            try {
+                document.recoverFromDisk();
+                System.out.println("[PERSIST] Recovery OK. Doc='" + document.getContent() + "'");
+                System.out.println("[PERSIST] Clock=" + document.getClockCopy());
+            } catch (Exception e) {
+                System.out.println("[PERSIST] Recovery falló (continúo): " + e.getMessage());
             }
 
-            // 2. Estado inicial (solo el servidor 0 es líder inicial)
-            boolean isInitialLeader = (myId == 0);
-            ServerState state = new ServerState(myId, isInitialLeader);
-            System.out.println("Lider inicial: " + (isInitialLeader ? "ESTE SERVIDOR" : "Servidor 0"));
-
-            // 3. Componentes del sistema
+            // Notifier
             Notifier notifier = new Notifier(state);
-            Document document = new Document(myId, totalNodes); // IMPORTANTE: totalNodes para VectorClock
-            EditorServiceImpl service = new EditorServiceImpl(document, notifier, state);
-            
-            // 4. Conector para replicación
-            ServerConnectorImpl connector = new ServerConnectorImpl(myId, allServers);
-            service.setBackupConnector(connector);
 
-            // 5. Crear/obtener registro RMI
+            // Lista de servidores
+            List<RemoteServerInfo> allServers = new ArrayList<>();
+            for (int i = 0; i < totalNodes; i++) {
+                int p = 1099 + i; // ejemplo: 1099,1100,1101...
+                allServers.add(new RemoteServerInfo(i, "127.0.0.1", p, "EditorService"));
+            }
+
+            // Backups = todos menos yo
+            List<RemoteServerInfo> backups = new ArrayList<>();
+            for (RemoteServerInfo info : allServers) {
+                if (info.getServerId() != myId) backups.add(info);
+            }
+
+            // Connector (replicación del líder a backups)
+            ServerConnectorImpl connector = new ServerConnectorImpl(myId, backups);
+
+            // Servicio RMI
+            EditorServiceImpl service = new EditorServiceImpl(document, notifier, connector, state);
+
+            // Registry
             Registry registry;
             try {
                 registry = LocateRegistry.createRegistry(port);
-                System.out.println("Registro RMI creado en puerto " + port);
             } catch (Exception e) {
                 registry = LocateRegistry.getRegistry(port);
-                System.out.println("Usando registro existente en puerto " + port);
             }
-
-            // 6. Publicar servicio
             registry.rebind("EditorService", service);
-            System.out.println("Servicio publicado como 'EditorService'");
+            System.out.println("Servidor " + myId + " publicado en puerto " + port);
 
-            // 7. Iniciar sistema de elección y heartbeat
-            if (totalNodes > 1) {
-                try {
-                    BullyElection bully = new BullyElection(state, allServers, service);
-                    new Thread(new HeartbeatMonitor(state, bully, 2000)).start();
-                    System.out.println("Monitor de latidos iniciado (intervalo: 2s)");
-                } catch (Exception e) {
-                    System.err.println("Error iniciando monitor: " + e.getMessage());
-                }
-            }
+            // Bully + Heartbeat
+            BullyElection bully = new BullyElection(state, allServers, service);
+            HeartbeatMonitor hb = new HeartbeatMonitor(state, bully, 1000);
+            new Thread(hb, "Heartbeat-" + myId).start();
 
-            // 8. Mostrar resumen
-            System.out.println("\n" + "=".repeat(60));
-            System.out.println("SERVIDOR " + myId + " LISTO");
-            System.out.println("=".repeat(60));
-            System.out.println("URL: rmi://127.0.0.1:" + port + "/EditorService");
-            System.out.println("Estado: " + (state.isLeader() ? "LIDER" : "BACKUP"));
-            System.out.println("Lider actual: " + state.getCurrentLeaderId());
-            System.out.println("=".repeat(60) + "\n");
+            System.out.println("Servidor " + myId + " listo.");
 
         } catch (Exception e) {
-            System.err.println("\nERROR INICIANDO SERVIDOR " + args[0] + ":");
             e.printStackTrace();
         }
     }

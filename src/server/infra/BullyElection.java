@@ -1,72 +1,112 @@
 package server.infra;
 
 import common.IEditorService;
+import common.VectorClock;
+
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BullyElection {
+
+    /** Provider LOCAL (no RMI) para snapshot y hook al core */
+    public interface StateProvider {
+        String getDocumentSnapshot();
+        VectorClock getClockSnapshot();
+        void onBecameLeader();
+    }
+
     private final ServerState state;
     private final List<RemoteServerInfo> allServers;
-    private final IEditorService myServiceStub;
+    private final StateProvider provider;
 
-    public BullyElection(ServerState state, List<RemoteServerInfo> allServers, IEditorService myServiceStub) {
+    private final AtomicBoolean electionInProgress = new AtomicBoolean(false);
+
+    public BullyElection(ServerState state, List<RemoteServerInfo> allServers, StateProvider provider) {
         this.state = state;
         this.allServers = allServers;
-        this.myServiceStub = myServiceStub;
+        this.provider = provider;
     }
 
     public void onLeaderDown() {
-        // FIX: Si ya soy líder o hay líder conocido, no hacer nada
-        if (state.isLeader() || state.getCurrentLeaderId() != -1) {
-            return;
-        }
-        
-        System.out.println("Detectado fallo de líder. Iniciando eleccion...");
-        boolean foundHigher = false;
-        int myId = state.getMyServerId();
+        if (state.isLeader()) return;
 
-        for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() > myId) {
+        if (!electionInProgress.compareAndSet(false, true)) {
+            return; // ya hay elección en curso
+        }
+
+        try {
+            int myId = state.getMyServerId();
+            System.out.println("[Bully] Detectado fallo de líder. Elección... (yo=" + myId + ")");
+
+            // Elegimos ID más alto vivo (determinista)
+            int highestAlive = myId;
+
+            for (RemoteServerInfo info : allServers) {
+                int id = info.getServerId();
+                if (id <= myId) continue;
+
                 try {
-                    info.getStub().heartbeat(); 
-                    foundHigher = true;
-                    System.out.println("Nodo " + info.getServerId() + " responde");
-                } catch (Exception e) {
-                    // Nodo no disponible
+                    info.getStub().heartbeat();
+                    highestAlive = Math.max(highestAlive, id);
+                } catch (Exception ignored) {
+                    // no responde: no lo contamos
                 }
             }
-        }
 
-        if (!foundHigher) {
-            becomeLeaderNow();
+            if (highestAlive == myId) {
+                becomeLeaderNow();
+            } else {
+                System.out.println("[Bully] Hay un ID mayor vivo. Nuevo líder esperado: " + highestAlive);
+                state.setLeader(false);
+                state.setCurrentLeaderId(highestAlive);
+            }
+        } finally {
+            electionInProgress.set(false);
         }
     }
 
     private void becomeLeaderNow() {
-        System.out.println("Me proclamo LIDER (ID " + state.getMyServerId() + ")");
-        
+        int myId = state.getMyServerId();
+        System.out.println("[Bully] Me proclamo LÍDER (ID " + myId + ")");
+
+        // Estado local
         state.setLeader(true);
-        state.setCurrentLeaderId(state.getMyServerId()); 
-        
+        state.setCurrentLeaderId(myId);
+
+        // Aviso al core (aceptar escrituras + persistencia)
+        try {
+            provider.onBecameLeader();
+        } catch (Exception e) {
+            System.out.println("[Bully] Error onBecameLeader(): " + e.getMessage());
+        }
+
+        // Snapshot del estado para sincronizar al resto
+        String doc = provider.getDocumentSnapshot();
+        VectorClock clock = provider.getClockSnapshot();
+
+        // Notificar y sincronizar a los demás
         for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() == state.getMyServerId()) continue;
+            if (info.getServerId() == myId) continue;
+
             try {
-                info.getStub().declareLeader(state.getMyServerId());
-                System.out.println("Notificado a servidor " + info.getServerId());
+                IEditorService stub = info.getStub();
+                stub.declareLeader(myId);
+                stub.applyReplication(doc, clock); // estado completo -> backups consistentes + persistencia
+                System.out.println("[Bully] Notificado+sync a servidor " + info.getServerId());
             } catch (Exception e) {
-                System.out.println("No se pudo notificar a servidor " + info.getServerId());
+                System.out.println("[Bully] No se pudo notificar/sync a servidor " + info.getServerId());
             }
         }
-        System.out.println("Ahora acepto escrituras como lider");
+
+        System.out.println("[Bully] Ahora acepto escrituras como líder.");
     }
 
     public RemoteServerInfo getCurrentLeaderInfo() {
         int leaderId = state.getCurrentLeaderId();
         if (leaderId == -1) return null;
-        
+
         for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() == leaderId) {
-                return info;
-            }
+            if (info.getServerId() == leaderId) return info;
         }
         return null;
     }

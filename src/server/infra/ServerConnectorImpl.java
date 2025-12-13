@@ -32,7 +32,6 @@ public class ServerConnectorImpl implements IServerConnector {
     }
 
     // NUEVO: Para que EditorServiceImpl pueda buscar el líder
-    public List<RemoteServerInfo> getAllServers() {
-        return backupServers;
-    }
+    public List<RemoteServerInfo> getOtherServers() { return backupServers; }
+
 }
