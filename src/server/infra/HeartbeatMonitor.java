@@ -1,45 +1,49 @@
 package server.infra;
 
 public class HeartbeatMonitor implements Runnable {
+
     private final ServerState serverState;
     private final BullyElection bully;
     private final long intervalMs;
-    private boolean electionDone = false;
 
-    public HeartbeatMonitor(ServerState state, BullyElection bully, long interval) {
+    public HeartbeatMonitor(ServerState state, BullyElection bully, long intervalMs) {
         this.serverState = state;
         this.bully = bully;
-        this.intervalMs = interval;
+        this.intervalMs = intervalMs;
     }
 
     @Override
     public void run() {
-        System.out.println("Monitor iniciado. Buscando líder...");
-        
-        // 1. ELECCIÓN INMEDIATA al iniciar
-        if (!serverState.isLeader()) {
-            System.out.println("Iniciando elección al arrancar...");
-            bully.startElectionOnStartup();
-        }
-        
-        // 2. Monitoreo periódico
-        while (true) {
-            try { Thread.sleep(intervalMs); } catch (InterruptedException e) {}
-            
-            if (serverState.isLeader()) continue;
+        System.out.println("[HB] Monitor iniciado.");
 
-            RemoteServerInfo leader = bully.getCurrentLeaderInfo();
-            if (leader == null) {
-                System.out.println("No hay líder conocido. Reiniciando elección...");
+        // Pequeña espera para que RMI se estabilice (no bloqueante)
+        try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+
+        while (true) {
+            try {
+                Thread.sleep(intervalMs);
+            } catch (InterruptedException ignored) {}
+
+            // Si soy líder, no hago heartbeat
+            if (serverState.isLeader()) {
+                continue;
+            }
+
+            RemoteServerInfo leaderInfo = bully.getCurrentLeaderInfo();
+
+            // Si no hay líder conocido → elección
+            if (leaderInfo == null) {
+                System.out.println("[HB] No hay líder conocido. Lanzando elección.");
                 bully.onLeaderDown();
                 continue;
             }
-            
+
+            // Comprobar latido del líder
             try {
-                leader.getStub().heartbeat();
-                System.out.println("Líder " + leader.getServerId() + " responde");
+                leaderInfo.getStub().heartbeat();
+                // System.out.println("[HB] Líder " + leaderInfo.getServerId() + " responde");
             } catch (Exception e) {
-                System.out.println("Líder " + leader.getServerId() + " NO responde");
+                System.out.println("[HB] Líder " + leaderInfo.getServerId() + " NO responde");
                 serverState.setCurrentLeaderId(-1);
                 bully.onLeaderDown();
             }

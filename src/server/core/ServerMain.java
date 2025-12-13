@@ -45,6 +45,14 @@ public class ServerMain {
             // 3. Componentes del sistema
             Notifier notifier = new Notifier(state);
             Document document = new Document(myId, totalNodes);
+            //PERSISTENCIA: recovery al arrancar
+            try {
+                document.recoverFromDisk();
+                System.out.println("[PERSIST] Recovery OK. Doc='" + document.getContent() + "'");
+                System.out.println("[PERSIST] Clock=" + document.getClockCopy());
+            } catch (Exception e) {
+                System.out.println("[PERSIST] Recovery falló (continúo): " + e.getMessage());
+            }
             EditorServiceImpl service = new EditorServiceImpl(document, notifier, state);
             
             // 4. Conector para replicación

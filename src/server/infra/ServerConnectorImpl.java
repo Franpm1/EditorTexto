@@ -4,19 +4,21 @@ import common.VectorClock;
 import java.util.List;
 
 public class ServerConnectorImpl implements IServerConnector {
-    private final List<RemoteServerInfo> backupServers;
+
+    // En main se pasa allServers (no solo backups), así que lo llamamos claramente.
+    private final List<RemoteServerInfo> otherServers; 
     private final int myId;
 
-    public ServerConnectorImpl(int myId, List<RemoteServerInfo> backupServers) {
+    public ServerConnectorImpl(int myId, List<RemoteServerInfo> allServers) {
         this.myId = myId;
-        this.backupServers = backupServers;
+        this.otherServers = allServers;
     }
 
     @Override
     public void propagateToBackups(String fullDocument, VectorClock clockSnapshot) {
         System.out.println("Replicando a backups...");
-        
-        for (RemoteServerInfo info : backupServers) {
+
+        for (RemoteServerInfo info : otherServers) {
             if (info.getServerId() == myId) continue;
 
             new Thread(() -> {
@@ -27,12 +29,15 @@ public class ServerConnectorImpl implements IServerConnector {
                 } catch (Exception e) {
                     System.out.println("Servidor " + info.getServerId() + " no disponible");
                 }
-            }).start();
+            }, "replicate-to-" + info.getServerId()).start();
         }
     }
 
-    // NUEVO: Para que EditorServiceImpl pueda buscar el líder
+    /**
+     * Para que EditorServiceImpl pueda buscar el líder.
+     * Devuelve la lista de servidores conocidos (típicamente allServers).
+     */
     public List<RemoteServerInfo> getAllServers() {
-        return backupServers;
+        return otherServers;
     }
 }

@@ -1,9 +1,11 @@
 package server.core;
 
 import common.*;
+import server.infra.*;
+
+import java.io.IOException;
 import java.rmi.RemoteException;
 import java.rmi.server.UnicastRemoteObject;
-import server.infra.*;
 
 public class EditorServiceImpl extends UnicastRemoteObject implements IEditorService {
 
@@ -18,52 +20,65 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         this.notifier = notifier;
         this.serverState = state;
     }
-    
-    public void setBackupConnector(IServerConnector sc) { 
-        this.backupConnector = sc; 
+
+    public void setBackupConnector(IServerConnector sc) {
+        this.backupConnector = sc;
     }
 
     @Override
     public void executeOperation(Operation op) throws RemoteException {
         System.out.println("Operacion recibida de cliente: " + op.getType() + " de " + op.getOwner());
-        
+
         // SI SOY LÍDER: procesar y replicar
         if (serverState.isLeader()) {
             System.out.println("Soy lider, procesando operacion...");
-            
-            // 1. Aplicar localmente
+
+            // 0) WAL (durabilidad) ANTES de tocar memoria
+            try {
+                document.appendToWAL(op);
+            } catch (IOException e) {
+                throw new RemoteException("Fallo escribiendo WAL. Rechazo operación para no perder durabilidad.", e);
+            }
+
+            // 1) Aplicar localmente
             document.applyOperation(op);
-            
-            // 2. Broadcast solo a mis clientes locales (el líder)
+
+            // 2) Broadcast a mis clientes locales
             notifier.broadcast(document.getContent(), document.getClockCopy());
-            
-            // 3. Replicar a TODOS los backups
+
+            // 3) Replicar a backups
             if (backupConnector != null) {
                 backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
             }
-        } 
+
+            // 4) Snapshot periódico (limpia WAL)
+            try {
+                if (document.shouldSnapshot()) {
+                    System.out.println("[PERSIST] Snapshot por umbral.");
+                    document.saveSnapshot();
+                }
+            } catch (IOException e) {
+                System.out.println("[PERSIST] Error guardando snapshot: " + e.getMessage());
+            }
+        }
         // SI NO SOY LÍDER: redirigir al líder SIN aplicar localmente
         else {
             System.out.println("No soy lider, redirigiendo operacion al líder...");
-            
-            // Buscar el líder
+
             RemoteServerInfo leaderInfo = findLeaderInfo();
-            
+
             if (leaderInfo != null) {
                 try {
-                    // SOLO redirigir, NO aplicar localmente
                     leaderInfo.getStub().executeOperation(op);
                     System.out.println("Operacion redirigida al líder " + serverState.getCurrentLeaderId());
                 } catch (Exception e) {
                     System.out.println("Error redirigiendo al líder: " + e.getMessage());
-                    // Fallback: aplicar localmente si el líder no responde
-                    document.applyOperation(op);
-                    notifier.broadcast(document.getContent(), document.getClockCopy());
+                    System.out.println("NO aplico localmente: espero a nuevo líder / reconexión.");
+                    throw new RemoteException("No se pudo redirigir al líder.", e);
                 }
             } else {
-                System.out.println("No se encontro al líder, aplicando localmente");
-                document.applyOperation(op);
-                notifier.broadcast(document.getContent(), document.getClockCopy());
+                System.out.println("No se encontro al líder (leaderId=" + serverState.getCurrentLeaderId() + ")");
+                throw new RemoteException("No hay líder conocido ahora mismo.");
             }
         }
     }
@@ -84,8 +99,6 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     public void registerClient(IClientCallback client, String username) throws RemoteException {
         System.out.println("Registrando cliente: " + username);
         notifier.registerClient(client);
-        
-        // Enviar estado actual inmediatamente
         client.syncState(document.getContent(), document.getClockCopy());
     }
 
@@ -94,13 +107,28 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         // Simple respuesta de que estoy vivo
     }
 
+    /**
+     * En vuestro contrato actual, esta firma existe.
+     * Para evitar "líderes falsos", aquí lo tratamos como SYNC de estado completo.
+     * El liderazgo real se define con declareLeader().
+     */
     @Override
     public void becomeLeader(String doc, VectorClock clock) throws RemoteException {
-        System.out.println("Recibiendo traspaso de liderazgo...");
+        System.out.println("becomeLeader(): Recibiendo estado completo del líder...");
         document.overwriteState(doc, clock);
-        serverState.setLeader(true);
-        serverState.setCurrentLeaderId(serverState.getMyServerId());
-        System.out.println("Ahora soy el líder.");
+
+        // Persistencia: snapshot tras recibir estado completo
+        try {
+            document.saveSnapshot();
+        } catch (IOException e) {
+            System.out.println("[PERSIST] Error snapshot tras becomeLeader: " + e.getMessage());
+        }
+
+        // NO me marco líder aquí.
+        serverState.setLeader(false);
+
+        // Aviso a mis clientes locales si tengo
+        notifier.broadcast(document.getContent(), document.getClockCopy());
     }
 
     @Override
@@ -113,11 +141,17 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     @Override
     public void applyReplication(String doc, VectorClock clock) throws RemoteException {
         System.out.println("Replicacion recibida del líder");
-        
-        // 1. Aplicar el estado replicado
+
         document.overwriteState(doc, clock);
-        
-        // 2. Broadcast a mis clientes locales (IMPORTANTE: backups también notifican)
+
+        // Persistencia en backup: snapshot + limpia WAL
+        try {
+            document.saveSnapshot();
+        } catch (IOException e) {
+            System.out.println("[PERSIST] Error snapshot en backup: " + e.getMessage());
+        }
+
+        // Broadcast a mis clientes locales
         notifier.broadcast(document.getContent(), document.getClockCopy());
     }
 }
