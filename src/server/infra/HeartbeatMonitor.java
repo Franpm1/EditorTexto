@@ -14,8 +14,9 @@ public class HeartbeatMonitor implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("Monitor iniciado. Esperando 10s para estabilización...");
-        try { Thread.sleep(10000); } catch (InterruptedException e) {}
+        // ESPERAR MÁS PARA 6 SERVIDORES
+        System.out.println("Monitor iniciado. Esperando 15s para estabilización..."); // 15s en lugar de 10s
+        try { Thread.sleep(15000); } catch (InterruptedException e) {}
         System.out.println("Monitor activo. Comprobando líder...");
         
         while (true) {
@@ -35,7 +36,6 @@ public class HeartbeatMonitor implements Runnable {
                 System.out.println("Lider " + leader.getServerId() + " responde");
             } catch (Exception e) {
                 System.out.println("Lider " + leader.getServerId() + " NO responde");
-                // FIX CRÍTICO: Resetear el ID del líder antes de elección
                 serverState.setCurrentLeaderId(-1);
                 bully.onLeaderDown();
             }

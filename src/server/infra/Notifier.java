@@ -17,17 +17,12 @@ public class Notifier {
 
     public void registerClient(IClientCallback client) {
         clients.add(client);
-        System.out.println(" Cliente registrado. Total: " + clients.size());
+        System.out.println("Cliente registrado. Total: " + clients.size());
     }
 
     public void broadcast(String documentSnapshot, VectorClock clockSnapshot) {
-        // Solo el líder debe hacer broadcast
-        if (!serverState.isLeader()) {
-            System.out.println(" Intento de broadcast desde no-líder. Ignorando.");
-            return;
-        }
-        
-        System.out.println(" Broadcast a " + clients.size() + " clientes");
+        // TODOS los servidores pueden hacer broadcast a sus clientes locales
+        System.out.println("Broadcast a " + clients.size() + " clientes");
         
         synchronized (clients) {
             var iterator = clients.iterator();
@@ -35,9 +30,9 @@ public class Notifier {
                 IClientCallback client = iterator.next();
                 try {
                     client.syncState(documentSnapshot, clockSnapshot);
-                    System.out.println(" Cliente notificado");
+                    System.out.println("Cliente notificado");
                 } catch (RemoteException e) {
-                    System.out.println(" Cliente desconectado, removiendo...");
+                    System.out.println("Cliente desconectado, removiendo...");
                     iterator.remove();
                 }
             }

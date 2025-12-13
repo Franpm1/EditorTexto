@@ -25,30 +25,64 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void executeOperation(Operation op) throws RemoteException {
-        System.out.println(" Operación recibida: " + op.getType() + " de " + op.getOwner());
+        System.out.println("Operacion recibida de cliente: " + op.getType() + " de " + op.getOwner());
         
-        // 1. Aplicar la operación al documento local
-        document.applyOperation(op);
-        
-        // 2. Solo si soy líder, notificar a todos los clientes
+        // SI SOY LÍDER: procesar y replicar
         if (serverState.isLeader()) {
-            System.out.println("👑 Soy líder, haciendo broadcast...");
+            System.out.println("Soy lider, procesando operacion...");
+            
+            // 1. Aplicar localmente
+            document.applyOperation(op);
+            
+            // 2. Broadcast solo a mis clientes locales (el líder)
             notifier.broadcast(document.getContent(), document.getClockCopy());
             
-            // 3. Replicar a backups (otros servidores)
+            // 3. Replicar a TODOS los backups
             if (backupConnector != null) {
                 backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
             }
-        } else {
-            System.out.println(" No soy líder, solo aplicando localmente");
-            // Como no-líder, también debemos notificar a nuestros clientes locales
-            notifier.broadcast(document.getContent(), document.getClockCopy());
+        } 
+        // SI NO SOY LÍDER: redirigir al líder SIN aplicar localmente
+        else {
+            System.out.println("No soy lider, redirigiendo operacion al líder...");
+            
+            // Buscar el líder
+            RemoteServerInfo leaderInfo = findLeaderInfo();
+            
+            if (leaderInfo != null) {
+                try {
+                    // SOLO redirigir, NO aplicar localmente
+                    leaderInfo.getStub().executeOperation(op);
+                    System.out.println("Operacion redirigida al líder " + serverState.getCurrentLeaderId());
+                } catch (Exception e) {
+                    System.out.println("Error redirigiendo al líder: " + e.getMessage());
+                    // Fallback: aplicar localmente si el líder no responde
+                    document.applyOperation(op);
+                    notifier.broadcast(document.getContent(), document.getClockCopy());
+                }
+            } else {
+                System.out.println("No se encontro al líder, aplicando localmente");
+                document.applyOperation(op);
+                notifier.broadcast(document.getContent(), document.getClockCopy());
+            }
         }
+    }
+
+    private RemoteServerInfo findLeaderInfo() {
+        if (backupConnector instanceof ServerConnectorImpl) {
+            ServerConnectorImpl connector = (ServerConnectorImpl) backupConnector;
+            for (RemoteServerInfo info : connector.getAllServers()) {
+                if (info.getServerId() == serverState.getCurrentLeaderId()) {
+                    return info;
+                }
+            }
+        }
+        return null;
     }
 
     @Override
     public void registerClient(IClientCallback client, String username) throws RemoteException {
-        System.out.println(" Registrando cliente: " + username);
+        System.out.println("Registrando cliente: " + username);
         notifier.registerClient(client);
         
         // Enviar estado actual inmediatamente
@@ -62,26 +96,28 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void becomeLeader(String doc, VectorClock clock) throws RemoteException {
-        System.out.println(" Recibiendo traspaso de liderazgo...");
+        System.out.println("Recibiendo traspaso de liderazgo...");
         document.overwriteState(doc, clock);
         serverState.setLeader(true);
         serverState.setCurrentLeaderId(serverState.getMyServerId());
-        System.out.println(" Ahora soy el líder.");
+        System.out.println("Ahora soy el líder.");
     }
 
     @Override
     public void declareLeader(int leaderId) throws RemoteException {
-        System.out.println(" Servidor " + leaderId + " se ha declarado LÍDER.");
+        System.out.println("Servidor " + leaderId + " se ha declarado LIDER.");
         serverState.setCurrentLeaderId(leaderId);
         serverState.setLeader(leaderId == serverState.getMyServerId());
     }
 
     @Override
     public void applyReplication(String doc, VectorClock clock) throws RemoteException {
-        System.out.println(" Replicación recibida del líder");
+        System.out.println("Replicacion recibida del líder");
+        
+        // 1. Aplicar el estado replicado
         document.overwriteState(doc, clock);
         
-        // Notificar a nuestros clientes locales del cambio
+        // 2. Broadcast a mis clientes locales (IMPORTANTE: backups también notifican)
         notifier.broadcast(document.getContent(), document.getClockCopy());
     }
 }
