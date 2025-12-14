@@ -45,7 +45,7 @@ public class ConsoleUI {
         }
         
         System.out.println("-".repeat(50));
-        System.out.println(" Comandos: insert <pos> <texto> | delete <pos> <len> | help | exit");
+        System.out.println(" Comandos: insert <pos> <texto> | jumpline <pos> | delete <pos> <len> | help | exit");
         System.out.print("> ");
     }
 
@@ -132,6 +132,23 @@ public class ConsoleUI {
                     System.err.println(" Error de conexión: " + e.getMessage());
                 }
                 break;
+
+            case "jumpline":
+                if (parts.length < 2) {
+                    System.err.println(" Uso: jumpline <posición> ");
+                    break;
+                }
+                try {
+                    int pos = Integer.parseInt(parts[1]);
+                    Operation op = new Operation("INSERT", pos, "\n", username, null);
+                    server.executeOperation(op);
+                    System.out.println(" Operación enviada. Esperando actualización...");
+                } catch (NumberFormatException e) {
+                    System.err.println(" La posición debe ser un número entero");
+                } catch (RemoteException e) {
+                    System.err.println(" Error de conexión: " + e.getMessage());
+                }
+                break;
                 
             case "help":
                 showHelp();
@@ -163,6 +180,10 @@ public class ConsoleUI {
         System.out.println("insert <posición> <texto>");
         System.out.println("  Inserta texto en la posición especificada");
         System.out.println("  Ejemplo: insert 0 Hola mundo");
+        System.out.println();
+        System.out.println("jumpline <posición>");
+        System.out.println("  Inserta un salto de línea en la posición dada");
+        System.out.println("  Ejemplo: jumpline 5");
         System.out.println();
         System.out.println("delete <posición> <longitud>");
         System.out.println("  Borra caracteres desde la posición");
