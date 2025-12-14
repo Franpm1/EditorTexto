@@ -45,7 +45,8 @@ public class ConsoleUI {
         }
         
         System.out.println("-".repeat(50));
-        System.out.println(" Comandos: insert <pos> <texto> | delete <pos> <len> | help | exit");
+        System.out.println(" Comandos: insert <pos> <texto> | jumpline <pos> | delete <pos> <len>");
+        System.out.println("           replace <pos> <len> <texto_nuevo> | refresh | help | exit");
         System.out.print("> ");
     }
 
@@ -132,6 +133,66 @@ public class ConsoleUI {
                     System.err.println(" Error de conexión: " + e.getMessage());
                 }
                 break;
+
+            case "jumpline":
+                if (parts.length < 2) {
+                    System.err.println(" Uso: jumpline <posición> ");
+                    break;
+                }
+                try {
+                    int pos = Integer.parseInt(parts[1]);
+                    Operation op = new Operation("INSERT", pos, "\n", username, null);
+                    server.executeOperation(op);
+                    System.out.println(" Operación enviada. Esperando actualización...");
+                } catch (NumberFormatException e) {
+                    System.err.println(" La posición debe ser un número entero");
+                } catch (RemoteException e) {
+                    System.err.println(" Error de conexión: " + e.getMessage());
+                }
+                break;
+
+            case "replace":
+                if (parts.length < 3) {
+                    System.err.println(" Uso: replace <posición> <longitud_a_borrar> <texto_nuevo>");
+                    break;
+                }
+                try {
+                    // Parsear posición y longitud
+                    String[] replaceParts = parts[1].split("\\s+", 3);
+                    if (replaceParts.length < 3) {
+                        System.err.println(" Uso: replace <posición> <longitud_a_borrar> <texto_nuevo>");
+                        break;
+                    }
+                    
+                    int pos = Integer.parseInt(replaceParts[0]);
+                    int deleteLen = Integer.parseInt(replaceParts[1]);
+                    String newText = replaceParts[2];
+                    
+                    // Formato: "longitud|texto_nuevo"
+                    String operationText = deleteLen + "|" + newText;
+                    Operation op = new Operation("REPLACE", pos, operationText, username, null);
+                    server.executeOperation(op);
+                    System.out.println(" Sustitución enviada. Esperando actualización...");
+                } catch (NumberFormatException e) {
+                    System.err.println(" Posición y longitud deben ser números");
+                } catch (RemoteException e) {
+                    System.err.println(" Error de conexión: " + e.getMessage());
+                }
+                break;
+
+            case "refresh":
+                try {
+                    // Enviar una operación nula o pedir sincronización
+                    // Opción simple: solicitar estado actual al servidor
+                    System.out.println(" Solicitando estado actual del servidor...");
+                    // Como no hay método directo, enviamos una operación dummy que no cambie nada
+                    Operation dummyOp = new Operation("INSERT", 0, "", username, null);
+                    server.executeOperation(dummyOp);
+                    System.out.println(" Refresh solicitado. Esperando actualización...");
+                } catch (RemoteException e) {
+                    System.err.println(" Error de conexión: " + e.getMessage());
+                }
+                break;
                 
             case "help":
                 showHelp();
@@ -164,14 +225,23 @@ public class ConsoleUI {
         System.out.println("  Inserta texto en la posición especificada");
         System.out.println("  Ejemplo: insert 0 Hola mundo");
         System.out.println();
+        System.out.println("jumpline <posición>");
+        System.out.println("  Inserta un salto de línea en la posición dada");
+        System.out.println("  Ejemplo: jumpline 5");
+        System.out.println();
         System.out.println("delete <posición> <longitud>");
         System.out.println("  Borra caracteres desde la posición");
         System.out.println("  Ejemplo: delete 0 5 (borra 5 caracteres)");
         System.out.println();
-        System.out.println("show   - Muestra el documento actual");
-        System.out.println("clear  - Limpia la pantalla");
-        System.out.println("help   - Muestra esta ayuda");
-        System.out.println("exit   - Sale del programa");
+        System.out.println("replace <posición> <longitud_a_borrar> <texto_nuevo>");
+        System.out.println("  Sustituye un fragmento por otro texto");
+        System.out.println("  Ejemplo: replace 10 5 nuevo_texto");
+        System.out.println();
+        System.out.println("refresh  - Sincroniza manualmente con el servidor");
+        System.out.println("show     - Muestra el documento actual");
+        System.out.println("clear    - Limpia la pantalla");
+        System.out.println("help     - Muestra esta ayuda");
+        System.out.println("exit     - Sale del programa");
         System.out.println("=".repeat(50) + "\n");
     }
 }

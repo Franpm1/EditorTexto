@@ -5,9 +5,9 @@ import java.io.Serializable;
 public class Operation implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private final String type; // "INSERT" o "DELETE"
+    private final String type; // "INSERT", "DELETE" o "REPLACE"
     private final int position;
-    private final String text; // Texto a insertar o texto dummy para longitud de borrado
+    private final String text; // Texto a insertar o formato especial para DELETE/REPLACE
     private final String owner;
     private final VectorClock vectorClock;
 
