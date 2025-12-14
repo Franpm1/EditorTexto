@@ -135,8 +135,8 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
                     DocumentSnapshot snapshot = info.getStub().getCurrentState();
                     System.out.println("Estado del servidor " + info.getServerId() + ": " + snapshot.getClock());
                     
-                    // Si este servidor tiene un estado más reciente (comparar vector clocks)
-                    if (isClockNewer(snapshot.getClock(), latestClock)) {
+                    // Si este servidor tiene un estado más reciente usando comparador optimizado
+                    if (VectorClockComparator.isClockNewer(snapshot.getClock(), latestClock)) {
                         latestContent = snapshot.getContent();
                         latestClock = snapshot.getClock();
                         System.out.println("Servidor " + info.getServerId() + " tiene estado más reciente");
@@ -150,34 +150,6 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
             document.overwriteState(latestContent, latestClock);
             System.out.println("Estado sincronizado: " + latestContent);
         }
-    }
-    
-    // NUEVO: Comparar vector clocks
-    private boolean isClockNewer(VectorClock clock1, VectorClock clock2) {
-        // clock1 es más nuevo si para algún índice tiene un valor mayor
-        // y para ningún índice tiene un valor menor
-        boolean atLeastOneGreater = false;
-        boolean atLeastOneLess = false;
-        
-        int maxSize = Math.max(clock1.toString().length(), clock2.toString().length());
-        
-        // Parsear los strings del vector clock
-        String s1 = clock1.toString().replaceAll("\\[|\\]", "");
-        String s2 = clock2.toString().replaceAll("\\[|\\]", "");
-        String[] parts1 = s1.split(",");
-        String[] parts2 = s2.split(",");
-        
-        int minLength = Math.min(parts1.length, parts2.length);
-        
-        for (int i = 0; i < minLength; i++) {
-            int v1 = Integer.parseInt(parts1[i].trim());
-            int v2 = Integer.parseInt(parts2[i].trim());
-            
-            if (v1 > v2) atLeastOneGreater = true;
-            if (v1 < v2) atLeastOneLess = true;
-        }
-        
-        return atLeastOneGreater && !atLeastOneLess;
     }
 
     @Override

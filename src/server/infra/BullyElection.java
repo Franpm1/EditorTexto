@@ -1,6 +1,7 @@
 package server.infra;
 
 import common.IEditorService;
+import common.VectorClockComparator;
 import java.util.List;
 
 public class BullyElection {
@@ -104,8 +105,8 @@ public class BullyElection {
                     latestClock = snapshot.getClock();
                     gotState = true;
                 } else {
-                    // Comparar vector clocks para quedarse con el más reciente
-                    if (isClockNewer(snapshot.getClock(), latestClock)) {
+                    // Comparar vector clocks usando el comparador optimizado
+                    if (VectorClockComparator.isClockNewer(snapshot.getClock(), latestClock)) {
                         latestContent = snapshot.getContent();
                         latestClock = snapshot.getClock();
                     }
@@ -124,29 +125,6 @@ public class BullyElection {
                 System.out.println("Error aplicando estado sincronizado: " + e.getMessage());
             }
         }
-    }
-    
-    // NUEVO: Método para comparar vector clocks
-    private boolean isClockNewer(common.VectorClock clock1, common.VectorClock clock2) {
-        String s1 = clock1.toString().replaceAll("\\[|\\]", "");
-        String s2 = clock2.toString().replaceAll("\\[|\\]", "");
-        String[] parts1 = s1.split(",");
-        String[] parts2 = s2.split(",");
-        
-        boolean atLeastOneGreater = false;
-        boolean atLeastOneLess = false;
-        
-        int minLength = Math.min(parts1.length, parts2.length);
-        
-        for (int i = 0; i < minLength; i++) {
-            int v1 = Integer.parseInt(parts1[i].trim());
-            int v2 = Integer.parseInt(parts2[i].trim());
-            
-            if (v1 > v2) atLeastOneGreater = true;
-            if (v1 < v2) atLeastOneLess = true;
-        }
-        
-        return atLeastOneGreater && !atLeastOneLess;
     }
 
     private void becomeLeaderNow() {

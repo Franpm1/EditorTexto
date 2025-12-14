@@ -42,6 +42,11 @@ public class VectorClock implements Serializable {
         }
     }
 
+    // NUEVO: Getter para acceso eficiente (usado por VectorClockComparator)
+    public synchronized int[] getVector() {
+        return Arrays.copyOf(vector, vector.length); // Devuelve copia por seguridad
+    }
+
     @Override
     public String toString() {
         return Arrays.toString(vector).replace(" ", ""); // [1,0,2]
