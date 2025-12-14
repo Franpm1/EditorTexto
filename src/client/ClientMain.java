@@ -34,6 +34,11 @@ public class ClientMain {
             ui.setServer(serverStub);
             
             System.out.println("Conectado al servidor en puerto " + port);
+            
+            // NUEVO: Pausa para dar tiempo a sincronización del servidor
+            System.out.println("Esperando sincronización inicial (300ms)...");
+            Thread.sleep(300);
+            
             ui.start();
             
         } catch (Exception e) {
