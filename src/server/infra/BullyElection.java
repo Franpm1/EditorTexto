@@ -11,6 +11,7 @@ public class BullyElection {
     private final ServerState state;
     private final List<RemoteServerInfo> allServers;
     private final IEditorService myServiceStub;
+    private volatile boolean electionInProgress = false;
 
     public BullyElection(ServerState state, List<RemoteServerInfo> allServers, IEditorService myServiceStub) {
         this.state = state;
@@ -19,195 +20,190 @@ public class BullyElection {
     }
 
     public void startElectionOnStartup() {
-        System.out.println("🔍 Buscando servidores con ID mayor al mío (" + state.getMyServerId() + ") EN PARALELO...");
+        if (electionInProgress) return;
+        electionInProgress = true;
         
-        List<CompletableFuture<Boolean>> futures = new ArrayList<>();
+        System.out.println("🔍 INICIANDO ELECCIÓN: Buscando servidores con ID > " + state.getMyServerId());
+        
+        List<CompletableFuture<RemoteServerInfo>> higherAliveFutures = new ArrayList<>();
         int myId = state.getMyServerId();
 
-        // Crear todas las verificaciones en paralelo
+        // 1. Buscar TODOS los servidores con ID mayor
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() > myId) {
-                CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
+                CompletableFuture<RemoteServerInfo> future = CompletableFuture.supplyAsync(() -> {
                     try {
-                        // SOLO UNA verificación (eliminado el heartbeat duplicado)
-                        info.getStub().heartbeat();
-                        return true;
+                        // Timeout MUY CORTO: 300ms
+                        // Si responde en 300ms, está VIVO
+                        var stub = info.getStub();
+                        stub.heartbeat();
+                        return info; // Este servidor está VIVO
                     } catch (Exception e) {
-                        return false;
+                        return null; // Este servidor NO responde
                     }
                 }, ServerMain.GLOBAL_EXECUTOR);
                 
-                futures.add(future);
+                higherAliveFutures.add(future);
             }
         }
 
-        // Esperar TODAS las respuestas con timeout
+        if (higherAliveFutures.isEmpty()) {
+            // NO HAY servidores con ID mayor -> soy líder
+            System.out.println("✅ NO HAY servidores con ID mayor. Soy líder.");
+            syncStateBeforeBecomingLeader();
+            becomeLeaderNow();
+            electionInProgress = false;
+            return;
+        }
+
+        // 2. Esperar respuestas (timeout: 1 segundo)
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(
-            futures.toArray(new CompletableFuture[0])
+            higherAliveFutures.toArray(new CompletableFuture[0])
         );
         
         try {
-            // Timeout agresivo: 1 segundo
-            allFutures.get(1, TimeUnit.SECONDS);
-            
-            // Verificar si algún futuro retornó true
-            boolean foundHigher = false;
-            for (CompletableFuture<Boolean> future : futures) {
-                if (future.getNow(false)) { // getNow no bloquea
-                    foundHigher = true;
-                    break;
-                }
-            }
-
-            // Si NO encontré a nadie con ID mayor, soy el líder
-            if (!foundHigher) {
-                System.out.println("✅ No hay servidores con ID mayor respondiendo. Soy el líder.");
-                syncStateBeforeBecomingLeader();
-                becomeLeaderNow();
-            } else {
-                System.out.println("⏳ Hay servidores con ID mayor. Esperando líder...");
-            }
+            allFutures.get(1000, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            // Timeout - asumir que nadie responde y ser líder
-            System.out.println("⏱️ Timeout en elección. Me proclamo líder.");
+            // Timeout - algunos no respondieron
+        }
+        
+        // 3. Verificar: ¿Algún servidor con ID mayor está VIVO?
+        boolean foundHigherAlive = false;
+        int highestAliveId = -1;
+        
+        for (CompletableFuture<RemoteServerInfo> future : higherAliveFutures) {
+            try {
+                RemoteServerInfo aliveServer = future.getNow(null);
+                if (aliveServer != null) {
+                    foundHigherAlive = true;
+                    if (aliveServer.getServerId() > highestAliveId) {
+                        highestAliveId = aliveServer.getServerId();
+                    }
+                    System.out.println("   ✓ Servidor " + aliveServer.getServerId() + " RESPONDE");
+                }
+            } catch (Exception e) {
+                // Ignorar
+            }
+        }
+        
+        // 4. Decisión CRÍTICA
+        if (foundHigherAlive) {
+            // HAY servidores con ID mayor vivos -> NO soy líder
+            System.out.println("⏳ Hay servidores con ID mayor vivos. El líder debería ser: " + highestAliveId);
+            System.out.println("   Esperando que el servidor " + highestAliveId + " se declare líder...");
+            
+            // IMPORTANTE: Esperar un tiempo a que el de mayor ID se declare líder
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Thread.sleep(2000); // Esperar 2 segundos
+                    
+                    // Si después de 2 segundos nadie se ha declarado líder...
+                    if (state.getCurrentLeaderId() == -1) {
+                        System.out.println("⚠️  Nadie se ha declarado líder. Reintentando elección...");
+                        electionInProgress = false;
+                        startElectionOnStartup();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        } else {
+            // NINGÚN servidor con ID mayor responde -> soy líder
+            System.out.println("✅ NINGÚN servidor con ID mayor responde. Me proclamo líder.");
             syncStateBeforeBecomingLeader();
             becomeLeaderNow();
         }
+        
+        electionInProgress = false;
     }
 
     public void onLeaderDown() {
-        // Prevenir elecciones duplicadas
-        if (state.isLeader() || state.getCurrentLeaderId() != -1) {
+        // Prevenir múltiples elecciones simultáneas
+        if (electionInProgress || state.isLeader()) {
             return;
         }
         
-        System.out.println("⚡ Detectado fallo de líder. Iniciando elección PARALELA...");
-        
-        List<CompletableFuture<Boolean>> futures = new ArrayList<>();
-        int myId = state.getMyServerId();
-
-        for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() > myId) {
-                CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
-                    try {
-                        info.getStub().heartbeat(); 
-                        return true;
-                    } catch (Exception e) {
-                        return false;
-                    }
-                }, ServerMain.GLOBAL_EXECUTOR);
-                
-                futures.add(future);
-            }
-        }
-
-        // Verificar rápidamente
-        boolean foundHigher = false;
-        for (CompletableFuture<Boolean> future : futures) {
-            if (future.getNow(false)) {
-                foundHigher = true;
-                break;
-            }
-        }
-
-        if (!foundHigher) {
-            syncStateBeforeBecomingLeader();
-            becomeLeaderNow();
-        }
+        System.out.println("⚡ LÍDER CAÍDO. Iniciando nueva elección...");
+        startElectionOnStartup();
     }
 
     private void syncStateBeforeBecomingLeader() {
-        System.out.println("🔄 Sincronizando estado en paralelo antes de convertirme en líder...");
+        System.out.println("🔄 Sincronizando estado con otros servidores...");
         
-        List<CompletableFuture<common.DocumentSnapshot>> futures = new ArrayList<>();
+        // Solo sincronizar con servidores que estén vivos
+        List<CompletableFuture<common.DocumentSnapshot>> snapshots = new ArrayList<>();
         
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
             
-            CompletableFuture<common.DocumentSnapshot> future = CompletableFuture.supplyAsync(() -> {
+            snapshots.add(CompletableFuture.supplyAsync(() -> {
                 try {
                     return info.getStub().getCurrentState();
                 } catch (Exception e) {
                     return null;
                 }
-            }, ServerMain.GLOBAL_EXECUTOR);
-            
-            futures.add(future);
+            }, ServerMain.GLOBAL_EXECUTOR));
         }
         
-        // Buscar el estado más reciente entre todos los que respondan
         String latestContent = "";
         common.VectorClock latestClock = null;
         
-        for (CompletableFuture<common.DocumentSnapshot> future : futures) {
+        // Esperar un tiempo corto por respuestas
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        for (CompletableFuture<common.DocumentSnapshot> future : snapshots) {
             try {
-                common.DocumentSnapshot snapshot = future.get(500, TimeUnit.MILLISECONDS);
+                common.DocumentSnapshot snapshot = future.getNow(null);
                 if (snapshot != null) {
-                    if (latestClock == null || isClockNewer(snapshot.getClock(), latestClock)) {
+                    if (latestClock == null || snapshot.getClock().isNewerThan(latestClock)) {
                         latestContent = snapshot.getContent();
                         latestClock = snapshot.getClock();
                     }
                 }
             } catch (Exception e) {
-                // Ignorar timeout/error
+                // Ignorar
             }
         }
         
         if (latestClock != null) {
             try {
                 myServiceStub.becomeLeader(latestContent, latestClock);
-                System.out.println("✅ Estado sincronizado antes de ser líder.");
+                System.out.println("✅ Estado sincronizado desde otro servidor.");
             } catch (Exception e) {
-                System.out.println("⚠️ Error aplicando estado sincronizado: " + e.getMessage());
+                System.out.println("⚠️  Error al sincronizar estado: " + e.getMessage());
             }
         }
     }
-    
-    private boolean isClockNewer(common.VectorClock clock1, common.VectorClock clock2) {
-        // Versión OPTIMIZADA sin parsear strings
-        String s1 = clock1.toString().replaceAll("\\[|\\]", "");
-        String s2 = clock2.toString().replaceAll("\\[|\\]", "");
-        String[] parts1 = s1.split(",");
-        String[] parts2 = s2.split(",");
-        
-        boolean atLeastOneGreater = false;
-        boolean atLeastOneLess = false;
-        
-        int minLength = Math.min(parts1.length, parts2.length);
-        
-        for (int i = 0; i < minLength; i++) {
-            int v1 = Integer.parseInt(parts1[i].trim());
-            int v2 = Integer.parseInt(parts2[i].trim());
-            
-            if (v1 > v2) atLeastOneGreater = true;
-            if (v1 < v2) atLeastOneLess = true;
-        }
-        
-        return atLeastOneGreater && !atLeastOneLess;
-    }
 
     private void becomeLeaderNow() {
-        System.out.println("👑 Me proclamo LÍDER (ID " + state.getMyServerId() + ")");
+        System.out.println("👑 ========== SOY EL NUEVO LÍDER (ID " + state.getMyServerId() + ") ==========");
         
         state.setLeader(true);
         state.setCurrentLeaderId(state.getMyServerId());
         
-        // Notificar a todos los backups EN PARALELO
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        // Notificar a TODOS los servidores EN PARALELO
+        List<CompletableFuture<Void>> notifications = new ArrayList<>();
         
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
             
-            futures.add(CompletableFuture.runAsync(() -> {
+            notifications.add(CompletableFuture.runAsync(() -> {
                 try {
+                    System.out.println("   Notificando a servidor " + info.getServerId() + "...");
                     info.getStub().declareLeader(state.getMyServerId());
+                    System.out.println("   ✓ Servidor " + info.getServerId() + " notificado");
                 } catch (Exception e) {
-                    // Error silencioso
+                    System.out.println("   ✗ Servidor " + info.getServerId() + " no disponible");
                 }
             }, ServerMain.GLOBAL_EXECUTOR));
         }
         
-        System.out.println("✅ Notificaciones de liderazgo enviadas en paralelo.");
+        // No esperar a que terminen todas las notificaciones
+        System.out.println("✅ Notificaciones de liderazgo enviadas.");
     }
 
     public RemoteServerInfo getCurrentLeaderInfo() {

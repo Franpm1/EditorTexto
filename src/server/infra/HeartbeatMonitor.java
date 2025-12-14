@@ -7,6 +7,8 @@ public class HeartbeatMonitor implements Runnable {
     private final ServerState serverState;
     private final BullyElection bully;
     private final long intervalMs;
+    private int consecutiveFailures = 0;
+    private static final int MAX_FAILURES = 2; // Requerir 2 fallos consecutivos
 
     public HeartbeatMonitor(ServerState state, BullyElection bully, long interval) {
         this.serverState = state;
@@ -16,16 +18,21 @@ public class HeartbeatMonitor implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("Monitor iniciado. Buscando líder...");
+        System.out.println("Monitor de latidos iniciado (intervalo: " + intervalMs + "ms)");
         
-        // 1. ELECCIÓN INMEDIATA al iniciar (en segundo plano)
+        // Elección inicial en segundo plano
         if (!serverState.isLeader()) {
             CompletableFuture.runAsync(() -> {
-                bully.startElectionOnStartup();
+                try {
+                    Thread.sleep(1000); // Esperar 1s antes de primera elección
+                    bully.startElectionOnStartup();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }, ServerMain.GLOBAL_EXECUTOR);
         }
         
-        // 2. Monitoreo periódico NO BLOQUEANTE
+        // Loop principal de monitoreo
         while (true) {
             try { 
                 Thread.sleep(intervalMs); 
@@ -33,27 +40,56 @@ public class HeartbeatMonitor implements Runnable {
                 break;
             }
             
-            if (serverState.isLeader()) continue;
-
-            RemoteServerInfo leader = bully.getCurrentLeaderInfo();
-            if (leader == null) {
-                // Líder desconocido - elección en segundo plano
-                CompletableFuture.runAsync(() -> {
-                    bully.onLeaderDown();
-                }, ServerMain.GLOBAL_EXECUTOR);
+            // Si soy líder, no necesito monitorear a otros
+            if (serverState.isLeader()) {
+                consecutiveFailures = 0;
                 continue;
             }
             
-            // Verificar líder EN SEGUNDO PLANO (no bloquear loop principal)
+            RemoteServerInfo leader = bully.getCurrentLeaderInfo();
+            if (leader == null) {
+                // No hay líder conocido
+                if (consecutiveFailures++ >= MAX_FAILURES) {
+                    System.out.println("⚠️  Sin líder conocido. Iniciando elección...");
+                    CompletableFuture.runAsync(() -> {
+                        bully.onLeaderDown();
+                    }, ServerMain.GLOBAL_EXECUTOR);
+                    consecutiveFailures = 0;
+                }
+                continue;
+            }
+            
+            // Verificar líder en segundo plano
+            final RemoteServerInfo currentLeader = leader;
             CompletableFuture.runAsync(() -> {
                 try {
-                    leader.getStub().heartbeat();
-                    // Líder responde - todo bien
+                    // Timeout MUY CORTO: 300ms
+                    currentLeader.getStub().heartbeat();
+                    
+                    // ÉXITO: líder responde
+                    consecutiveFailures = 0;
+                    // System.out.println("Líder " + currentLeader.getServerId() + " responde OK");
+                    
                 } catch (Exception e) {
-                    // Líder no responde - iniciar elección
-                    System.out.println("Líder " + leader.getServerId() + " NO responde");
-                    serverState.setCurrentLeaderId(-1);
-                    bully.onLeaderDown();
+                    // FALLO: líder no responde
+                    consecutiveFailures++;
+                    System.out.println("❌ Líder " + currentLeader.getServerId() + 
+                                     " no responde (" + consecutiveFailures + "/" + MAX_FAILURES + ")");
+                    
+                    if (consecutiveFailures >= MAX_FAILURES) {
+                        System.out.println("🔥 LÍDER CAÍDO CONFIRMADO. Iniciando elección...");
+                        serverState.setCurrentLeaderId(-1);
+                        consecutiveFailures = 0;
+                        
+                        // Pequeña espera antes de elección (dar chance a que otros detecten)
+                        try {
+                            Thread.sleep(500);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                        
+                        bully.onLeaderDown();
+                    }
                 }
             }, ServerMain.GLOBAL_EXECUTOR);
         }

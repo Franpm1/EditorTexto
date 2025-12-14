@@ -106,9 +106,37 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void declareLeader(int leaderId) throws RemoteException {
-        System.out.println("Servidor " + leaderId + " se ha declarado LÍDER.");
+        System.out.println("📢 RECIBIDO: Servidor " + leaderId + " se ha declarado LÍDER.");
+        
+        // CRÍTICO: Solo aceptar si el nuevo líder tiene ID mayor que el actual
+        int currentLeader = serverState.getCurrentLeaderId();
+        if (currentLeader != -1 && leaderId <= currentLeader) {
+            System.out.println("⚠️  IGNORANDO: " + leaderId + " no es mayor que líder actual " + currentLeader);
+            return;
+        }
+        
+        // Aceptar nuevo líder
         serverState.setCurrentLeaderId(leaderId);
         serverState.setLeader(leaderId == serverState.getMyServerId());
+        
+        if (leaderId == serverState.getMyServerId()) {
+            System.out.println("🎉 ¡Confirmado! YO soy el nuevo líder.");
+        } else {
+            System.out.println("✅ Aceptado nuevo líder: servidor " + leaderId);
+            
+            // Si tenía contenido local, descartarlo (el líder tiene la verdad)
+            try {
+                // Opcional: pedir estado al nuevo líder
+                RemoteServerInfo newLeader = findLeaderInfo();
+                if (newLeader != null) {
+                    DocumentSnapshot snapshot = newLeader.getStub().getCurrentState();
+                    document.overwriteState(snapshot.getContent(), snapshot.getClock());
+                    System.out.println("Estado sincronizado con nuevo líder.");
+                }
+            } catch (Exception e) {
+                // Ignorar error
+            }
+        }
     }
 
     @Override
