@@ -1,10 +1,12 @@
 package server.infra;
 
+import java.util.concurrent.CompletableFuture;
+import server.core.ServerMain;
+
 public class HeartbeatMonitor implements Runnable {
     private final ServerState serverState;
     private final BullyElection bully;
     private final long intervalMs;
-    private boolean electionDone = false;
 
     public HeartbeatMonitor(ServerState state, BullyElection bully, long interval) {
         this.serverState = state;
@@ -16,33 +18,44 @@ public class HeartbeatMonitor implements Runnable {
     public void run() {
         System.out.println("Monitor iniciado. Buscando líder...");
         
-        // 1. ELECCIÓN INMEDIATA al iniciar
+        // 1. ELECCIÓN INMEDIATA al iniciar (en segundo plano)
         if (!serverState.isLeader()) {
-            System.out.println("Iniciando elección al arrancar...");
-            bully.startElectionOnStartup();
+            CompletableFuture.runAsync(() -> {
+                bully.startElectionOnStartup();
+            }, ServerMain.GLOBAL_EXECUTOR);
         }
         
-        // 2. Monitoreo periódico
+        // 2. Monitoreo periódico NO BLOQUEANTE
         while (true) {
-            try { Thread.sleep(intervalMs); } catch (InterruptedException e) {}
+            try { 
+                Thread.sleep(intervalMs); 
+            } catch (InterruptedException e) {
+                break;
+            }
             
             if (serverState.isLeader()) continue;
 
             RemoteServerInfo leader = bully.getCurrentLeaderInfo();
             if (leader == null) {
-                System.out.println("No hay líder conocido. Reiniciando elección...");
-                bully.onLeaderDown();
+                // Líder desconocido - elección en segundo plano
+                CompletableFuture.runAsync(() -> {
+                    bully.onLeaderDown();
+                }, ServerMain.GLOBAL_EXECUTOR);
                 continue;
             }
             
-            try {
-                leader.getStub().heartbeat();
-                System.out.println("Líder " + leader.getServerId() + " responde");
-            } catch (Exception e) {
-                System.out.println("Líder " + leader.getServerId() + " NO responde");
-                serverState.setCurrentLeaderId(-1);
-                bully.onLeaderDown();
-            }
+            // Verificar líder EN SEGUNDO PLANO (no bloquear loop principal)
+            CompletableFuture.runAsync(() -> {
+                try {
+                    leader.getStub().heartbeat();
+                    // Líder responde - todo bien
+                } catch (Exception e) {
+                    // Líder no responde - iniciar elección
+                    System.out.println("Líder " + leader.getServerId() + " NO responde");
+                    serverState.setCurrentLeaderId(-1);
+                    bully.onLeaderDown();
+                }
+            }, ServerMain.GLOBAL_EXECUTOR);
         }
     }
 }

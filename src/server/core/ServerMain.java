@@ -4,9 +4,14 @@ import java.net.InetAddress;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import server.infra.*;
 
 public class ServerMain {
+    // Thread pool global para todo el servidor
+    public static ExecutorService GLOBAL_EXECUTOR;
+    
     public static void main(String[] args) {
         if (args.length < 2) {
             System.out.println("Uso: java server.core.ServerMain <ID> <PORT> [CONFIG_FILE]");
@@ -16,12 +21,23 @@ public class ServerMain {
         }
 
         try {
+            // Configurar timeouts AGGRESIVOS para RMI
+            System.setProperty("sun.rmi.transport.tcp.responseTimeout", "1000");
+            System.setProperty("sun.rmi.transport.proxy.connectTimeout", "1000");
+            System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "1000");
+            System.setProperty("sun.rmi.transport.tcp.readTimeout", "1000");
+            
+            // Thread pool óptimo (CPU cores * 2)
+            int poolSize = Runtime.getRuntime().availableProcessors() * 2;
+            GLOBAL_EXECUTOR = Executors.newFixedThreadPool(poolSize);
+            System.out.println("Thread pool configurado: " + poolSize + " threads");
+            
             // Obtener IP local automáticamente
             String localIP = InetAddress.getLocalHost().getHostAddress();
             System.out.println("IP Local detectada: " + localIP);
             
             System.setProperty("java.net.preferIPv4Stack", "true");
-            System.setProperty("java.rmi.server.hostname", localIP); // Usar IP real
+            System.setProperty("java.rmi.server.hostname", localIP);
 
             int myId = Integer.parseInt(args[0]);
             int port = Integer.parseInt(args[1]);
@@ -62,7 +78,7 @@ public class ServerMain {
 
             // 4. Componentes del sistema
             Notifier notifier = new Notifier(state);
-            Document document = new Document(myId, allServers.size()); // Tamaño según servidores config
+            Document document = new Document(myId, allServers.size());
             EditorServiceImpl service = new EditorServiceImpl(document, notifier, state);
             
             // 5. Conector para replicación
@@ -87,8 +103,9 @@ public class ServerMain {
             if (allServers.size() > 1) {
                 try {
                     BullyElection bully = new BullyElection(state, allServers, service);
-                    new Thread(new HeartbeatMonitor(state, bully, 2000)).start();
-                    System.out.println("Monitor de latidos iniciado (intervalo: 2s)");
+                    // REDUCIR intervalo de heartbeat a 500ms
+                    new Thread(new HeartbeatMonitor(state, bully, 500)).start();
+                    System.out.println("Monitor de latidos iniciado (intervalo: 500ms)");
                 } catch (Exception e) {
                     System.err.println("Error iniciando monitor: " + e.getMessage());
                 }

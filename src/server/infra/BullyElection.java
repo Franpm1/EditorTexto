@@ -1,7 +1,11 @@
 package server.infra;
 
 import common.IEditorService;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import server.core.ServerMain;
 
 public class BullyElection {
     private final ServerState state;
@@ -15,42 +19,59 @@ public class BullyElection {
     }
 
     public void startElectionOnStartup() {
-        System.out.println("🔍 Buscando servidores con ID mayor al mío (" + state.getMyServerId() + ")...");
-        boolean foundHigher = false;
+        System.out.println("🔍 Buscando servidores con ID mayor al mío (" + state.getMyServerId() + ") EN PARALELO...");
+        
+        List<CompletableFuture<Boolean>> futures = new ArrayList<>();
         int myId = state.getMyServerId();
 
-        // Preguntar a TODOS los servidores con ID mayor
+        // Crear todas las verificaciones en paralelo
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() > myId) {
-                try {
-                    System.out.println("  Probando servidor " + info.getServerId() + "...");
-                    info.getStub().heartbeat();
-                    foundHigher = true;
-                    System.out.println("  ✓ Servidor " + info.getServerId() + " responde");
-                    
-                    // Si responde, preguntarle quién es el líder actual
+                CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
                     try {
-                        info.getStub().heartbeat(); // Doble verificación
-                        state.setCurrentLeaderId(info.getServerId());
-                        System.out.println("  Líder actual: " + info.getServerId());
+                        // SOLO UNA verificación (eliminado el heartbeat duplicado)
+                        info.getStub().heartbeat();
+                        return true;
                     } catch (Exception e) {
-                        // No pasa nada, seguimos buscando
+                        return false;
                     }
-                } catch (Exception e) {
-                    System.out.println("  ✗ Servidor " + info.getServerId() + " no disponible");
-                }
+                }, ServerMain.GLOBAL_EXECUTOR);
+                
+                futures.add(future);
             }
         }
 
-        // Si NO encontré a nadie con ID mayor, soy el líder
-        if (!foundHigher) {
-            System.out.println("✅ No hay servidores con ID mayor. Soy el líder.");
+        // Esperar TODAS las respuestas con timeout
+        CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+            futures.toArray(new CompletableFuture[0])
+        );
+        
+        try {
+            // Timeout agresivo: 1 segundo
+            allFutures.get(1, TimeUnit.SECONDS);
             
-            // NUEVO: Sincronizar estado antes de proclamarme líder
+            // Verificar si algún futuro retornó true
+            boolean foundHigher = false;
+            for (CompletableFuture<Boolean> future : futures) {
+                if (future.getNow(false)) { // getNow no bloquea
+                    foundHigher = true;
+                    break;
+                }
+            }
+
+            // Si NO encontré a nadie con ID mayor, soy el líder
+            if (!foundHigher) {
+                System.out.println("✅ No hay servidores con ID mayor respondiendo. Soy el líder.");
+                syncStateBeforeBecomingLeader();
+                becomeLeaderNow();
+            } else {
+                System.out.println("⏳ Hay servidores con ID mayor. Esperando líder...");
+            }
+        } catch (Exception e) {
+            // Timeout - asumir que nadie responde y ser líder
+            System.out.println("⏱️ Timeout en elección. Me proclamo líder.");
             syncStateBeforeBecomingLeader();
             becomeLeaderNow();
-        } else {
-            System.out.println("⏳ Esperando notificación del líder...");
         }
     }
 
@@ -60,74 +81,90 @@ public class BullyElection {
             return;
         }
         
-        System.out.println("⚡ Detectado fallo de líder. Iniciando elección...");
-        boolean foundHigher = false;
+        System.out.println("⚡ Detectado fallo de líder. Iniciando elección PARALELA...");
+        
+        List<CompletableFuture<Boolean>> futures = new ArrayList<>();
         int myId = state.getMyServerId();
 
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() > myId) {
-                try {
-                    info.getStub().heartbeat(); 
-                    foundHigher = true;
-                    System.out.println("✓ Nodo " + info.getServerId() + " responde");
-                } catch (Exception e) {
-                    // Nodo no disponible
-                }
+                CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        info.getStub().heartbeat(); 
+                        return true;
+                    } catch (Exception e) {
+                        return false;
+                    }
+                }, ServerMain.GLOBAL_EXECUTOR);
+                
+                futures.add(future);
+            }
+        }
+
+        // Verificar rápidamente
+        boolean foundHigher = false;
+        for (CompletableFuture<Boolean> future : futures) {
+            if (future.getNow(false)) {
+                foundHigher = true;
+                break;
             }
         }
 
         if (!foundHigher) {
-            // NUEVO: Sincronizar estado antes de proclamarme líder
             syncStateBeforeBecomingLeader();
             becomeLeaderNow();
         }
     }
 
-    // NUEVO: Método para sincronizar estado antes de convertirse en líder
     private void syncStateBeforeBecomingLeader() {
-        System.out.println("🔄 Sincronizando estado antes de convertirme en líder...");
+        System.out.println("🔄 Sincronizando estado en paralelo antes de convertirme en líder...");
         
-        String latestContent = "";
-        common.VectorClock latestClock = null;
-        boolean gotState = false;
+        List<CompletableFuture<common.DocumentSnapshot>> futures = new ArrayList<>();
         
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
             
+            CompletableFuture<common.DocumentSnapshot> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return info.getStub().getCurrentState();
+                } catch (Exception e) {
+                    return null;
+                }
+            }, ServerMain.GLOBAL_EXECUTOR);
+            
+            futures.add(future);
+        }
+        
+        // Buscar el estado más reciente entre todos los que respondan
+        String latestContent = "";
+        common.VectorClock latestClock = null;
+        
+        for (CompletableFuture<common.DocumentSnapshot> future : futures) {
             try {
-                common.DocumentSnapshot snapshot = info.getStub().getCurrentState();
-                System.out.println("Estado obtenido del servidor " + info.getServerId() + 
-                    ": VC=" + snapshot.getClock());
-                
-                if (!gotState) {
-                    latestContent = snapshot.getContent();
-                    latestClock = snapshot.getClock();
-                    gotState = true;
-                } else {
-                    // Comparar vector clocks para quedarse con el más reciente
-                    if (isClockNewer(snapshot.getClock(), latestClock)) {
+                common.DocumentSnapshot snapshot = future.get(500, TimeUnit.MILLISECONDS);
+                if (snapshot != null) {
+                    if (latestClock == null || isClockNewer(snapshot.getClock(), latestClock)) {
                         latestContent = snapshot.getContent();
                         latestClock = snapshot.getClock();
                     }
                 }
             } catch (Exception e) {
-                System.out.println("No se pudo obtener estado del servidor " + info.getServerId());
+                // Ignorar timeout/error
             }
         }
         
-        if (gotState) {
+        if (latestClock != null) {
             try {
                 myServiceStub.becomeLeader(latestContent, latestClock);
-                System.out.println("Estado sincronizado: " + 
-                    (latestContent.isEmpty() ? "(vacío)" : latestContent.substring(0, Math.min(50, latestContent.length()))));
+                System.out.println("✅ Estado sincronizado antes de ser líder.");
             } catch (Exception e) {
-                System.out.println("Error aplicando estado sincronizado: " + e.getMessage());
+                System.out.println("⚠️ Error aplicando estado sincronizado: " + e.getMessage());
             }
         }
     }
     
-    // NUEVO: Método para comparar vector clocks
     private boolean isClockNewer(common.VectorClock clock1, common.VectorClock clock2) {
+        // Versión OPTIMIZADA sin parsear strings
         String s1 = clock1.toString().replaceAll("\\[|\\]", "");
         String s2 = clock2.toString().replaceAll("\\[|\\]", "");
         String[] parts1 = s1.split(",");
@@ -153,18 +190,24 @@ public class BullyElection {
         System.out.println("👑 Me proclamo LÍDER (ID " + state.getMyServerId() + ")");
         
         state.setLeader(true);
-        state.setCurrentLeaderId(state.getMyServerId()); 
+        state.setCurrentLeaderId(state.getMyServerId());
+        
+        // Notificar a todos los backups EN PARALELO
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
-            try {
-                info.getStub().declareLeader(state.getMyServerId());
-                System.out.println("✓ Notificado a servidor " + info.getServerId());
-            } catch (Exception e) {
-                System.out.println("✗ No se pudo notificar a servidor " + info.getServerId());
-            }
+            
+            futures.add(CompletableFuture.runAsync(() -> {
+                try {
+                    info.getStub().declareLeader(state.getMyServerId());
+                } catch (Exception e) {
+                    // Error silencioso
+                }
+            }, ServerMain.GLOBAL_EXECUTOR));
         }
-        System.out.println("✅ Ahora acepto escrituras como líder");
+        
+        System.out.println("✅ Notificaciones de liderazgo enviadas en paralelo.");
     }
 
     public RemoteServerInfo getCurrentLeaderInfo() {

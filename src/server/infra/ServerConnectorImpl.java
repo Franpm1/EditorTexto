@@ -2,6 +2,8 @@ package server.infra;
 
 import common.VectorClock;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import server.core.ServerMain;
 
 public class ServerConnectorImpl implements IServerConnector {
     private final List<RemoteServerInfo> backupServers;
@@ -14,24 +16,24 @@ public class ServerConnectorImpl implements IServerConnector {
 
     @Override
     public void propagateToBackups(String fullDocument, VectorClock clockSnapshot) {
-        System.out.println("Replicando a backups...");
+        System.out.println("Replicando a " + (backupServers.size() - 1) + " backups EN PARALELO...");
         
         for (RemoteServerInfo info : backupServers) {
             if (info.getServerId() == myId) continue;
 
-            new Thread(() -> {
+            // Usar CompletableFuture para ejecución paralela NO BLOQUEANTE
+            CompletableFuture.runAsync(() -> {
                 try {
-                    System.out.println("Enviando a servidor " + info.getServerId() + "...");
                     info.getStub().applyReplication(fullDocument, clockSnapshot);
-                    System.out.println("Replicado a servidor " + info.getServerId());
+                    // Log reducido para velocidad
                 } catch (Exception e) {
-                    System.out.println("Servidor " + info.getServerId() + " no disponible");
+                    // Error silencioso - no imprimir (evita bloqueo I/O)
                 }
-            }).start();
+            }, ServerMain.GLOBAL_EXECUTOR); // Usar thread pool global
         }
+        // NO ESPERAR a que terminen - continuar inmediatamente
     }
 
-    // NUEVO: Para que EditorServiceImpl pueda buscar el líder
     public List<RemoteServerInfo> getAllServers() {
         return backupServers;
     }

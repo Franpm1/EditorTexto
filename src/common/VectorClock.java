@@ -11,12 +11,10 @@ public class VectorClock implements Serializable {
         this.vector = new int[size];
     }
 
-    // Constructor de copia vital para snapshots
     public VectorClock(VectorClock other) {
         this.vector = Arrays.copyOf(other.vector, other.vector.length);
     }
     
-    // Constructor para mocks/tests
     public VectorClock(int[] values) {
         this.vector = Arrays.copyOf(values, values.length);
     }
@@ -34,7 +32,6 @@ public class VectorClock implements Serializable {
         }
     }
     
-    // Método para sobreescribir el estado (Sync)
     public synchronized void copyFrom(VectorClock other) {
         if (other == null) return;
         for (int i = 0; i < vector.length && i < other.vector.length; i++) {
@@ -42,8 +39,25 @@ public class VectorClock implements Serializable {
         }
     }
 
+    // MÉTODO NUEVO: Comparación eficiente
+    public synchronized boolean isNewerThan(VectorClock other) {
+        if (other == null) return true;
+        
+        boolean atLeastOneGreater = false;
+        boolean atLeastOneLess = false;
+        
+        int minLength = Math.min(this.vector.length, other.vector.length);
+        
+        for (int i = 0; i < minLength; i++) {
+            if (this.vector[i] > other.vector[i]) atLeastOneGreater = true;
+            if (this.vector[i] < other.vector[i]) atLeastOneLess = true;
+        }
+        
+        return atLeastOneGreater && !atLeastOneLess;
+    }
+
     @Override
     public String toString() {
-        return Arrays.toString(vector).replace(" ", ""); // [1,0,2]
+        return Arrays.toString(vector).replace(" ", "");
     }
 }

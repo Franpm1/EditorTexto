@@ -8,10 +8,15 @@ public class ClientMain {
     public static void main(String[] args) {
         System.out.println("=== CLIENTE ===");
         
+        // Configurar timeouts AGGRESIVOS para RMI
+        System.setProperty("sun.rmi.transport.tcp.responseTimeout", "1000");
+        System.setProperty("sun.rmi.transport.proxy.connectTimeout", "1000");
+        System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "1000");
+        System.setProperty("sun.rmi.transport.tcp.readTimeout", "1000");
+        
         String username = "User";
         int port = 1099; // Default
         
-        // Si recibe argumento, usar ese puerto
         if (args.length > 0) {
             try {
                 port = Integer.parseInt(args[0]);
@@ -33,7 +38,7 @@ public class ClientMain {
             serverStub.registerClient(clientCallback, username);
             ui.setServer(serverStub);
             
-            System.out.println("Conectado al servidor en puerto " + port);
+            System.out.println("✅ Conectado al servidor en puerto " + port);
             ui.start();
             
         } catch (Exception e) {
