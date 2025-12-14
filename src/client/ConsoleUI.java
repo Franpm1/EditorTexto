@@ -7,6 +7,7 @@ import java.rmi.RemoteException;
 import java.util.Scanner;
 
 public class ConsoleUI {
+
     private IEditorService server;
     private final String username;
     private boolean running = true;
@@ -14,19 +15,21 @@ public class ConsoleUI {
     private String lastClock = "[0,0,0]";
     private final Scanner scanner = new Scanner(System.in);
 
-    public ConsoleUI(String username) { 
-        this.username = username; 
+    public ConsoleUI(String username) {
+        this.username = username;
     }
-    
-    public void setServer(IEditorService server) { 
-        this.server = server; 
+
+    public void setServer(IEditorService server) {
+        this.server = server;
         System.out.println("✅ Servidor configurado");
     }
 
     public void updateView(String content, VectorClock clock) {
         System.out.println("\n[ACTUALIZACIÓN RECIBIDA]");
         this.lastContent = content;
-        if (clock != null) this.lastClock = clock.toString();
+        if (clock != null) {
+            this.lastClock = clock.toString();
+        }
         displayCurrentState();
     }
 
@@ -37,13 +40,13 @@ public class ConsoleUI {
         System.out.println("=".repeat(50));
         System.out.println(" VECTOR CLOCK: " + lastClock);
         System.out.println("-".repeat(50));
-        
+
         if (lastContent.isEmpty()) {
             System.out.println(" DOCUMENTO: (vacío)");
         } else {
             System.out.println(" DOCUMENTO:\n" + lastContent);
         }
-        
+
         System.out.println("-".repeat(50));
         System.out.println(" Comandos: insert <pos> <texto> | jumpline <pos> | delete <pos> <len>");
         System.out.println("           replace <pos> <len> <texto_nuevo> | refresh | help | exit");
@@ -66,24 +69,24 @@ public class ConsoleUI {
 
     public void start() {
         displayCurrentState();
-        
+
         while (running) {
             try {
                 String line = scanner.nextLine().trim();
-                
+
                 if (line.isEmpty()) {
                     System.out.print("> ");
                     continue;
                 }
-                
+
                 if (line.equalsIgnoreCase("exit")) {
                     System.out.println(" Saliendo...");
                     running = false;
                     break;
                 }
-                
+
                 processCommand(line);
-                
+
             } catch (Exception e) {
                 System.err.println(" Error: " + e.getMessage());
                 System.out.print("> ");
@@ -95,7 +98,7 @@ public class ConsoleUI {
     private void processCommand(String line) {
         String[] parts = line.split("\\s+", 3);
         String cmd = parts[0].toLowerCase();
-        
+
         switch (cmd) {
             case "insert":
                 if (parts.length < 3) {
@@ -114,7 +117,7 @@ public class ConsoleUI {
                     System.err.println(" Error de conexión: " + e.getMessage());
                 }
                 break;
-                
+
             case "delete":
                 if (parts.length < 3) {
                     System.err.println(" Uso: delete <posición> <longitud>");
@@ -152,22 +155,21 @@ public class ConsoleUI {
                 break;
 
             case "replace":
-                if (parts.length < 3) {
-                    System.err.println(" Uso: replace <posición> <longitud_a_borrar> <texto_nuevo>");
-                    break;
-                }
                 try {
-                    // Parsear posición y longitud
-                    String[] replaceParts = parts[1].split("\\s+", 3);
+                    // Eliminar "replace " del inicio
+                    String argsLine = line.substring(8).trim();
+                    String[] replaceParts = argsLine.split("\\s+", 3);
+
                     if (replaceParts.length < 3) {
                         System.err.println(" Uso: replace <posición> <longitud_a_borrar> <texto_nuevo>");
+                        System.err.println(" Ejemplo: replace 5 5 amigo");
                         break;
                     }
-                    
+
                     int pos = Integer.parseInt(replaceParts[0]);
                     int deleteLen = Integer.parseInt(replaceParts[1]);
                     String newText = replaceParts[2];
-                    
+
                     // Formato: "longitud|texto_nuevo"
                     String operationText = deleteLen + "|" + newText;
                     Operation op = new Operation("REPLACE", pos, operationText, username, null);
@@ -177,6 +179,8 @@ public class ConsoleUI {
                     System.err.println(" Posición y longitud deben ser números");
                 } catch (RemoteException e) {
                     System.err.println(" Error de conexión: " + e.getMessage());
+                } catch (StringIndexOutOfBoundsException e) {
+                    System.err.println(" Uso: replace <posición> <longitud_a_borrar> <texto_nuevo>");
                 }
                 break;
 
@@ -193,25 +197,25 @@ public class ConsoleUI {
                     System.err.println(" Error de conexión: " + e.getMessage());
                 }
                 break;
-                
+
             case "help":
                 showHelp();
                 break;
-                
+
             case "show":
                 displayCurrentState();
                 break;
-                
+
             case "clear":
                 clearScreen();
                 System.out.print("> ");
                 break;
-                
+
             default:
                 System.err.println(" Comando desconocido. Escribe 'help' para ayuda.");
                 break;
         }
-        
+
         if (!cmd.equals("clear")) {
             System.out.print("> ");
         }

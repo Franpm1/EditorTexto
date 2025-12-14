@@ -103,19 +103,49 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         System.out.println("Ahora soy el líder.");
     }
 
-    @Override
-    public void declareLeader(int leaderId) throws RemoteException {
-        System.out.println("Servidor " + leaderId + " se ha declarado LIDER.");
-        serverState.setCurrentLeaderId(leaderId);
-        serverState.setLeader(leaderId == serverState.getMyServerId());
-        
-        // NUEVO: Si yo era el líder anteriormente y ahora otro es líder,
-        // necesito sincronizar mi estado con el nuevo líder
-        if (serverState.getMyServerId() == leaderId) {
-            System.out.println("Yo soy el nuevo líder. Sincronizando estado...");
-            syncWithOtherServers();
-        }
+    // En EditorServiceImpl.java, reemplaza el método declareLeader:
+
+@Override
+public void declareLeader(int leaderId) throws RemoteException {
+    System.out.println("📢 DECLARACIÓN DE LÍDER RECIBIDA: Servidor " + leaderId + " es el LÍDER.");
+    
+    // Solo actualizar si el nuevo líder es diferente
+    if (serverState.getCurrentLeaderId() != leaderId) {
+        System.out.println("Actualizando líder de " + serverState.getCurrentLeaderId() + " a " + leaderId);
     }
+    
+    // Actualizar estado local
+    serverState.setCurrentLeaderId(leaderId);
+    serverState.setLeader(leaderId == serverState.getMyServerId());
+    
+    // Replicar esta información a otros servidores (propagación en cascada)
+    if (backupConnector instanceof ServerConnectorImpl && !serverState.isLeader()) {
+        ServerConnectorImpl connector = (ServerConnectorImpl) backupConnector;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        
+        for (RemoteServerInfo info : connector.getAllServers()) {
+            if (info.getServerId() == serverState.getMyServerId() || 
+                info.getServerId() == leaderId) continue;
+                
+            pool.execute(() -> {
+                try {
+                    // Solo propagar si no somos el líder
+                    info.getStub().declareLeader(leaderId);
+                } catch (Exception e) {
+                    // Ignorar errores de propagación
+                }
+            });
+        }
+        pool.shutdown();
+    }
+    
+    if (serverState.getMyServerId() == leaderId) {
+        System.out.println("👑 ¡YO soy el nuevo líder! Sincronizando estado...");
+        syncWithOtherServers();
+    } else {
+        System.out.println("✅ Reconozco a servidor " + leaderId + " como líder");
+    }
+}
 
     // NUEVO: Método para sincronizar estado cuando tomo liderazgo
     private void syncWithOtherServers() {

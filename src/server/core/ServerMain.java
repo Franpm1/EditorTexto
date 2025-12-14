@@ -7,6 +7,7 @@ import java.util.List;
 import server.infra.*;
 
 public class ServerMain {
+
     public static void main(String[] args) {
         if (args.length < 2) {
             System.out.println("Uso: java server.core.ServerMain <ID> <PORT> [CONFIG_FILE]");
@@ -21,7 +22,7 @@ public class ServerMain {
             System.setProperty("sun.rmi.transport.proxy.connectTimeout", "1000");
             System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "1000");
             System.setProperty("sun.rmi.dgc.ackTimeout", "1000");
-            
+
             String localIP = InetAddress.getLocalHost().getHostAddress();
             System.setProperty("java.net.preferIPv4Stack", "true");
             System.setProperty("java.rmi.server.hostname", localIP);
@@ -33,7 +34,7 @@ public class ServerMain {
             System.out.println("INICIANDO SERVIDOR " + myId + " EN " + localIP + ":" + port);
 
             List<RemoteServerInfo> allServers = ConfigLoader.loadConfig(configFile, myId);
-            
+
             boolean myIdFound = false;
             for (RemoteServerInfo info : allServers) {
                 if (info.getServerId() == myId) {
@@ -41,7 +42,7 @@ public class ServerMain {
                     break;
                 }
             }
-            
+
             if (!myIdFound) {
                 System.err.println("ERROR: Mi ID " + myId + " no encontrado");
                 return;
@@ -51,7 +52,7 @@ public class ServerMain {
             Notifier notifier = new Notifier(state);
             Document document = new Document(myId, allServers.size());
             EditorServiceImpl service = new EditorServiceImpl(document, notifier, state);
-            
+
             ServerConnectorImpl connector = new ServerConnectorImpl(myId, allServers);
             service.setBackupConnector(connector);
 
@@ -67,11 +68,17 @@ public class ServerMain {
             if (allServers.size() > 1) {
                 try {
                     BullyElection bully = new BullyElection(state, allServers, service);
-                    // Intervalo más corto: 1500ms
-					Thread.sleep(2000);
-                    new Thread(new HeartbeatMonitor(state, bully, 200)).start();
+
+                    // ESPERAR MÁS ANTES DE INICIAR ELECCIÓN
+                    System.out.println("Esperando 3 segundos para que otros servidores inicien...");
+                    Thread.sleep(3000);
+
+                    new Thread(new HeartbeatMonitor(state, bully, 500)).start(); // Intervalo mayor: 500ms
                 } catch (Exception e) {
-                    // Continuar
+                    System.out.println("Error iniciando elección: " + e.getMessage());
+                    // Continuar sin elección (modo standalone)
+                    state.setLeader(true);
+                    state.setCurrentLeaderId(myId);
                 }
             } else {
                 state.setLeader(true);
