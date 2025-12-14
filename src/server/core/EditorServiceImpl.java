@@ -101,6 +101,7 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         serverState.setLeader(true);
         serverState.setCurrentLeaderId(serverState.getMyServerId());
         System.out.println("Ahora soy el líder.");
+		notifier.broadcast(document.getContent(), document.getClockCopy());
     }
 
     @Override

@@ -68,7 +68,7 @@ public class ServerMain {
                 try {
                     BullyElection bully = new BullyElection(state, allServers, service);
                     // Intervalo más corto: 1500ms
-                    new Thread(new HeartbeatMonitor(state, bully, 1500)).start();
+                    new Thread(new HeartbeatMonitor(state, bully, 200)).start();
                 } catch (Exception e) {
                     // Continuar
                 }
