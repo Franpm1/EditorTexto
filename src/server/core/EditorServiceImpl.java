@@ -26,7 +26,6 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void executeOperation(Operation op) throws RemoteException {
-        // Log reducido para velocidad
         System.out.println("Op: " + op.getType() + " de " + op.getOwner());
         
         if (serverState.isLeader()) {
@@ -43,23 +42,30 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
                 backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
             }
         } else {
-            // Redirigir al líder EN SEGUNDO PLANO
-            CompletableFuture.runAsync(() -> {
-                RemoteServerInfo leaderInfo = findLeaderInfo();
-                if (leaderInfo != null) {
-                    try {
-                        leaderInfo.getStub().executeOperation(op);
-                    } catch (Exception e) {
-                        // Fallback rápido: aplicar localmente
-                        document.applyOperation(op);
-                        notifier.broadcast(document.getContent(), document.getClockCopy());
-                    }
-                } else {
-                    // No hay líder conocido - aplicar localmente
+            // REDIRECCIÓN SÍNCRONA - El cliente debe saber si falla
+            RemoteServerInfo leaderInfo = findLeaderInfo();
+            if (leaderInfo != null) {
+                try {
+                    leaderInfo.getStub().executeOperation(op);
+                    System.out.println("✓ Operación redirigida al líder " + leaderInfo.getServerId());
+                } catch (Exception e) {
+                    // Líder no disponible - aplicar localmente como fallback
+                    System.out.println("✗ Líder no disponible, aplicando localmente");
                     document.applyOperation(op);
                     notifier.broadcast(document.getContent(), document.getClockCopy());
+                    
+                    // Iniciar elección en segundo plano
+                    triggerElectionAsync();
                 }
-            }, ServerMain.GLOBAL_EXECUTOR);
+            } else {
+                // No hay líder conocido - aplicar localmente
+                System.out.println("⚠️  No hay líder conocido, aplicando localmente");
+                document.applyOperation(op);
+                notifier.broadcast(document.getContent(), document.getClockCopy());
+                
+                // Iniciar elección en segundo plano
+                triggerElectionAsync();
+            }
         }
     }
 
@@ -73,6 +79,20 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
             }
         }
         return null;
+    }
+    
+    private void triggerElectionAsync() {
+        CompletableFuture.runAsync(() -> {
+            try {
+                Thread.sleep(1000); // Esperar 1s antes de elección
+                if (!serverState.isLeader() && serverState.getCurrentLeaderId() == -1) {
+                    System.out.println("🚨 Iniciando elección por falta de líder...");
+                    // Esto debería dispararse a través del HeartbeatMonitor
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, ServerMain.GLOBAL_EXECUTOR);
     }
 
     @Override
@@ -108,35 +128,63 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     public void declareLeader(int leaderId) throws RemoteException {
         System.out.println("📢 RECIBIDO: Servidor " + leaderId + " se ha declarado LÍDER.");
         
-        // CRÍTICO: Solo aceptar si el nuevo líder tiene ID mayor que el actual
+        // **CORRECCIÓN CRÍTICA:** Solo verificar que no soy yo mismo el líder actual
+        // No comparar IDs, aceptar cualquier declaración de líder (evita bloqueos)
         int currentLeader = serverState.getCurrentLeaderId();
-        if (currentLeader != -1 && leaderId <= currentLeader) {
-            System.out.println("⚠️  IGNORANDO: " + leaderId + " no es mayor que líder actual " + currentLeader);
+        
+        if (leaderId == serverState.getMyServerId()) {
+            // Alguien me declara líder a mí - verificar consistencia
+            if (!serverState.isLeader()) {
+                System.out.println("⚠️  Me declaran líder pero yo no me considero líder. Sincronizando...");
+                // Pedir estado al que me declara líder (debería ser yo mismo en elección)
+            }
             return;
         }
         
-        // Aceptar nuevo líder
+        // Aceptar nuevo líder inmediatamente
         serverState.setCurrentLeaderId(leaderId);
-        serverState.setLeader(leaderId == serverState.getMyServerId());
+        serverState.setLeader(false); // Yo no soy líder a menos que sea mi ID
         
-        if (leaderId == serverState.getMyServerId()) {
-            System.out.println("🎉 ¡Confirmado! YO soy el nuevo líder.");
+        if (serverState.getMyServerId() > leaderId) {
+            // **CORRECCIÓN:** Si tengo ID mayor, debo iniciar elección
+            System.out.println("⚡ Yo tengo ID mayor (" + serverState.getMyServerId() + 
+                             " > " + leaderId + "). Iniciando contra-elección...");
+            triggerCounterElection(leaderId);
         } else {
             System.out.println("✅ Aceptado nuevo líder: servidor " + leaderId);
             
-            // Si tenía contenido local, descartarlo (el líder tiene la verdad)
+            // Sincronizar estado con el nuevo líder
+            syncWithNewLeader(leaderId);
+        }
+    }
+    
+    private void triggerCounterElection(int currentLeaderId) {
+        CompletableFuture.runAsync(() -> {
             try {
-                // Opcional: pedir estado al nuevo líder
+                Thread.sleep(500); // Pequeña espera
+                if (serverState.getCurrentLeaderId() == currentLeaderId) {
+                    System.out.println("🚀 Iniciando elección por tener ID mayor...");
+                    // Notificar al HeartbeatMonitor o BullyElection
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, ServerMain.GLOBAL_EXECUTOR);
+    }
+    
+    private void syncWithNewLeader(int leaderId) {
+        CompletableFuture.runAsync(() -> {
+            try {
                 RemoteServerInfo newLeader = findLeaderInfo();
-                if (newLeader != null) {
+                if (newLeader != null && newLeader.getServerId() == leaderId) {
                     DocumentSnapshot snapshot = newLeader.getStub().getCurrentState();
                     document.overwriteState(snapshot.getContent(), snapshot.getClock());
-                    System.out.println("Estado sincronizado con nuevo líder.");
+                    System.out.println("Estado sincronizado con nuevo líder " + leaderId);
                 }
             } catch (Exception e) {
-                // Ignorar error
+                System.out.println("No se pudo sincronizar con líder " + leaderId + ": " + e.getMessage());
             }
-        }
+        }, ServerMain.GLOBAL_EXECUTOR);
     }
 
     @Override

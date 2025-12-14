@@ -7,43 +7,93 @@ public class ServerState {
     private final AtomicBoolean isLeader = new AtomicBoolean(false);
     private final AtomicInteger currentLeaderId = new AtomicInteger(-1);
     private final AtomicBoolean electionTriggered = new AtomicBoolean(false);
+    private final AtomicBoolean isCandidate = new AtomicBoolean(false); // **NUEVO:** Estado candidato
+    private final AtomicInteger leaderTerm = new AtomicInteger(0); // **NUEVO:** Término/generación
 
     public ServerState(int myServerId, boolean initiallyLeader) {
         this.myServerId = myServerId;
         this.isLeader.set(initiallyLeader);
         if (initiallyLeader) {
             this.currentLeaderId.set(myServerId);
+            this.leaderTerm.incrementAndGet();
         }
     }
     
     public int getMyServerId() { return myServerId; }
     public boolean isLeader() { return isLeader.get(); }
     
-    public void setLeader(boolean leader) {
-        isLeader.set(leader);
-        if (leader) {
+    // **MEJORADO:** Transición atómica a líder
+    public synchronized boolean becomeLeader() {
+        if (isCandidate.compareAndSet(true, false)) {
+            isLeader.set(true);
             currentLeaderId.set(myServerId);
-        } else if (currentLeaderId.get() == myServerId) {
-            // Si dejo de ser líder, limpiar el ID de líder
-            currentLeaderId.set(-1);
+            leaderTerm.incrementAndGet();
+            System.out.println("🎉 Convertido en líder. Término: " + leaderTerm.get());
+            return true;
+        }
+        return false;
+    }
+    
+    // **NUEVO:** Convertirse en candidato
+    public synchronized boolean becomeCandidate() {
+        if (!isLeader.get() && !isCandidate.get() && currentLeaderId.get() == -1) {
+            isCandidate.set(true);
+            System.out.println("🗳️  Convertido en candidato para elección.");
+            return true;
+        }
+        return false;
+    }
+    
+    // **NUEVO:** Abandonar candidatura
+    public synchronized void abandonCandidacy() {
+        isCandidate.set(false);
+    }
+    
+    public void setLeader(boolean leader) {
+        if (leader) {
+            becomeLeader();
+        } else {
+            isLeader.set(false);
+            if (currentLeaderId.get() == myServerId) {
+                currentLeaderId.set(-1);
+            }
         }
     }
     
     public int getCurrentLeaderId() { return currentLeaderId.get(); }
     
-    public void setCurrentLeaderId(int id) { 
-        // Solo aceptar nuevo líder si es diferente y no soy yo (a menos que sea -1)
-        if (id != myServerId || id == -1) {
-            currentLeaderId.set(id);
-            
-            // Si me asignan como líder a mí mismo, marcar isLeader=true
-            if (id == myServerId) {
-                isLeader.set(true);
-            } else if (id != -1) {
-                // Si asignan otro líder, yo NO soy líder
+    // **MEJORADO:** Con validación de término
+    public synchronized void setCurrentLeaderId(int newLeaderId) { 
+        if (newLeaderId == myServerId) {
+            // Me asignan a mí como líder
+            becomeLeader();
+        } else if (newLeaderId == -1) {
+            // Limpiar líder
+            currentLeaderId.set(-1);
+            isLeader.set(false);
+            isCandidate.set(false);
+        } else {
+            // Asignar otro líder
+            if (newLeaderId > currentLeaderId.get() || currentLeaderId.get() == -1) {
+                currentLeaderId.set(newLeaderId);
                 isLeader.set(false);
+                isCandidate.set(false);
+                System.out.println("✅ Nuevo líder establecido: " + newLeaderId);
+            } else if (newLeaderId < currentLeaderId.get()) {
+                System.out.println("⚠️  Ignorando líder con ID menor: " + newLeaderId + 
+                                 " < " + currentLeaderId.get());
             }
         }
+    }
+    
+    // **NUEVO:** Obtener término actual
+    public int getLeaderTerm() {
+        return leaderTerm.get();
+    }
+    
+    // **NUEVO:** Verificar si soy candidato
+    public boolean isCandidate() {
+        return isCandidate.get();
     }
     
     public boolean triggerElection() {
