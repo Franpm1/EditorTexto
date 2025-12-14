@@ -1,14 +1,16 @@
 package server.infra;
 
-import common.IEditorService;
 import common.DocumentSnapshot;
-import common.VectorClock;  // <-- ¡ESTE ES EL IMPORT QUE FALTA!
+import common.IEditorService;
+import common.VectorClock;
 import java.util.List;
+import java.util.concurrent.*;
 
 public class BullyElection {
     private final ServerState state;
     private final List<RemoteServerInfo> allServers;
     private final IEditorService myServiceStub;
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public BullyElection(ServerState state, List<RemoteServerInfo> allServers, IEditorService myServiceStub) {
         this.state = state;
@@ -18,34 +20,50 @@ public class BullyElection {
 
     public void startElectionOnStartup() {
         System.out.println("Buscando servidores con ID mayor al mío (" + state.getMyServerId() + ")...");
-        boolean foundHigher = false;
-        int myId = state.getMyServerId();
-
+        
+        // Usar threads paralelos para no bloquear
+        List<Future<Boolean>> futures = new CopyOnWriteArrayList<>();
+        
         for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() > myId) {
-                try {
-                    System.out.println("  Probando servidor " + info.getServerId() + "...");
-                    info.getStub().heartbeat();
-                    foundHigher = true;
-                    System.out.println("  ✓ Servidor " + info.getServerId() + " responde");
-                    
+            if (info.getServerId() > state.getMyServerId()) {
+                futures.add(executor.submit(() -> {
                     try {
+                        System.out.println("  Probando servidor " + info.getServerId() + "...");
                         info.getStub().heartbeat();
-                        state.setCurrentLeaderId(info.getServerId());
-                        System.out.println("  Líder actual: " + info.getServerId());
+                        System.out.println("  ✓ Servidor " + info.getServerId() + " responde");
+                        return true;
                     } catch (Exception e) {
-                        // No pasa nada
+                        System.out.println("  ✗ Servidor " + info.getServerId() + " no disponible");
+                        return false;
                     }
-                } catch (Exception e) {
-                    System.out.println("  ✗ Servidor " + info.getServerId() + " no disponible");
-                }
+                }));
             }
         }
-
+        
+        // Esperar máximo 3 segundos por respuestas
+        boolean foundHigher = false;
+        try {
+            for (Future<Boolean> future : futures) {
+                try {
+                    if (future.get(3, TimeUnit.SECONDS)) {
+                        foundHigher = true;
+                    }
+                } catch (TimeoutException e) {
+                    future.cancel(true);
+                }
+            }
+        } catch (Exception e) {
+            // Ignorar
+        }
+        
         if (!foundHigher) {
             System.out.println("✅ No hay servidores con ID mayor. Soy el líder.");
-            syncStateBeforeBecomingLeader();
-            becomeLeaderNow();
+            
+            // Sincronización ASINCRONA (no bloquea)
+            new Thread(() -> {
+                syncStateBeforeBecomingLeader();
+                becomeLeaderNow();
+            }).start();
         } else {
             System.out.println("⏳ Esperando notificación del líder...");
         }
@@ -57,65 +75,84 @@ public class BullyElection {
         }
         
         System.out.println("Detectado fallo de líder. Iniciando elección...");
+        
+        // Similar a startElectionOnStartup pero más rápido
         boolean foundHigher = false;
-        int myId = state.getMyServerId();
-
+        
         for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() > myId) {
+            if (info.getServerId() > state.getMyServerId()) {
                 try {
-                    info.getStub().heartbeat(); 
+                    // Timeout más corto para elección rápida
+                    CompletableFuture.supplyAsync(() -> {
+                        try {
+                            info.getStub().heartbeat();
+                            return true;
+                        } catch (Exception e) {
+                            return false;
+                        }
+                    }).get(2, TimeUnit.SECONDS); // Solo 2 segundos de espera
+                    
                     foundHigher = true;
                     System.out.println("✓ Nodo " + info.getServerId() + " responde");
+                    break; // Encontré uno, no necesito seguir
                 } catch (Exception e) {
-                    // Nodo no disponible
+                    // Timeout o error
                 }
             }
         }
 
         if (!foundHigher) {
-            syncStateBeforeBecomingLeader();
-            becomeLeaderNow();
+            // Sincronización en segundo plano
+            new Thread(() -> {
+                syncStateBeforeBecomingLeader();
+                becomeLeaderNow();
+            }).start();
         }
     }
 
     private void syncStateBeforeBecomingLeader() {
-        System.out.println("Sincronizando estado antes de convertirme en líder...");
+        System.out.println("Sincronizando estado (en segundo plano)...");
         
+        // Solo intentar con el primer servidor que responda, no con todos
         String latestContent = "";
         VectorClock latestClock = null;
-        boolean gotState = false;
         
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
             
             try {
-                DocumentSnapshot snapshot = info.getStub().getCurrentState();
-                System.out.println("Estado obtenido del servidor " + info.getServerId() + 
-                    ": VC=" + snapshot.getClock());
+                // Timeout corto: 2 segundos máximo por servidor
+                DocumentSnapshot snapshot = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return info.getStub().getCurrentState();
+                    } catch (Exception e) {
+                        return null;
+                    }
+                }).get(2, TimeUnit.SECONDS);
                 
-                if (!gotState) {
+                if (snapshot != null) {
+                    System.out.println("Estado obtenido del servidor " + info.getServerId());
                     latestContent = snapshot.getContent();
                     latestClock = snapshot.getClock();
-                    gotState = true;
-                } else {
-                    // Simple: quedarse con el último estado obtenido
-                    latestContent = snapshot.getContent();
-                    latestClock = snapshot.getClock();
+                    
+                    // Usar el primer estado que obtengamos y salir
+                    break;
                 }
             } catch (Exception e) {
-                System.out.println("No se pudo obtener estado del servidor " + info.getServerId() + ": " + e.getMessage());
+                System.out.println("Timeout con servidor " + info.getServerId() + ", probando siguiente...");
             }
         }
         
-        if (gotState) {
-            try {
+        try {
+            if (latestClock != null) {
                 myServiceStub.becomeLeader(latestContent, latestClock);
                 System.out.println("Estado sincronizado desde otro servidor");
-            } catch (Exception e) {
-                System.out.println("Error aplicando estado sincronizado: " + e.getMessage());
+            } else {
+                System.out.println("Inicio con documento vacío (no se pudo sincronizar)");
+                myServiceStub.becomeLeader("", new VectorClock(allServers.size()));
             }
-        } else {
-            System.out.println("No se pudo obtener estado de otros servidores, inicio con documento vacío");
+        } catch (Exception e) {
+            System.err.println("Error en sincronización: " + e.getMessage());
         }
     }
 
@@ -125,15 +162,20 @@ public class BullyElection {
         state.setLeader(true);
         state.setCurrentLeaderId(state.getMyServerId()); 
         
+        // Notificar a otros servidores EN PARALELO
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
-            try {
-                info.getStub().declareLeader(state.getMyServerId());
-                System.out.println("✓ Notificado a servidor " + info.getServerId());
-            } catch (Exception e) {
-                System.out.println("✗ No se pudo notificar a servidor " + info.getServerId());
-            }
+            
+            executor.submit(() -> {
+                try {
+                    info.getStub().declareLeader(state.getMyServerId());
+                    System.out.println("✓ Notificado a servidor " + info.getServerId());
+                } catch (Exception e) {
+                    System.out.println("✗ No se pudo notificar a servidor " + info.getServerId());
+                }
+            });
         }
+        
         System.out.println("✅ Ahora acepto escrituras como líder");
     }
 
