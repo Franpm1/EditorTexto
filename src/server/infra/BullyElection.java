@@ -101,7 +101,6 @@ public class BullyElection {
         }
     }
 
-    // ... (el resto de los métodos se mantienen igual)
     public void onLeaderDown() {
         if (state.isLeader() || state.getCurrentLeaderId() != -1) {
             return;
@@ -157,8 +156,6 @@ public class BullyElection {
         }
     }
 
-    // ... (syncStateBeforeBecomingLeader y becomeLeaderNow se mantienen igual)
-    
     private void syncStateBeforeBecomingLeader() {
         System.out.println("🔄 Sincronizando estado...");
         
@@ -219,5 +216,38 @@ public class BullyElection {
         }
     }
 
-    // ... (becomeLeaderNow y getCurrentLeaderInfo se mantienen igual)
+    private void becomeLeaderNow() {
+        System.out.println("👑 LÍDER (ID " + state.getMyServerId() + ")");
+        
+        state.setLeader(true);
+        state.setCurrentLeaderId(state.getMyServerId());
+        
+        ExecutorService notifyPool = Executors.newCachedThreadPool();
+        
+        for (RemoteServerInfo info : allServers) {
+            if (info.getServerId() == state.getMyServerId()) continue;
+            
+            notifyPool.execute(() -> {
+                try {
+                    info.getStub().declareLeader(state.getMyServerId());
+                } catch (Exception e) {
+                    // Silencioso
+                }
+            });
+        }
+        
+        notifyPool.shutdown();
+    }
+
+    public RemoteServerInfo getCurrentLeaderInfo() {
+        int leaderId = state.getCurrentLeaderId();
+        if (leaderId == -1) return null;
+        
+        for (RemoteServerInfo info : allServers) {
+            if (info.getServerId() == leaderId) {
+                return info;
+            }
+        }
+        return null;
+    }
 }
