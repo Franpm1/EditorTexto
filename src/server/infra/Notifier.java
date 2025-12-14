@@ -6,35 +6,37 @@ import java.rmi.RemoteException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class Notifier {
     private final List<IClientCallback> clients = Collections.synchronizedList(new ArrayList<>());
     private final ServerState serverState;
+    private final ExecutorService notifyPool;
 
     public Notifier(ServerState serverState) {
         this.serverState = serverState;
+        this.notifyPool = Executors.newCachedThreadPool();
     }
 
     public void registerClient(IClientCallback client) {
         clients.add(client);
-        System.out.println("Cliente registrado. Total: " + clients.size());
     }
 
     public void broadcast(String documentSnapshot, VectorClock clockSnapshot) {
-        // TODOS los servidores pueden hacer broadcast a sus clientes locales
-        System.out.println("Broadcast a " + clients.size() + " clientes");
-        
         synchronized (clients) {
             var iterator = clients.iterator();
             while (iterator.hasNext()) {
                 IClientCallback client = iterator.next();
-                try {
-                    client.syncState(documentSnapshot, clockSnapshot);
-                    System.out.println("Cliente notificado");
-                } catch (RemoteException e) {
-                    System.out.println("Cliente desconectado, removiendo...");
-                    iterator.remove();
-                }
+                notifyPool.execute(() -> {
+                    try {
+                        client.syncState(documentSnapshot, clockSnapshot);
+                    } catch (RemoteException e) {
+                        synchronized (clients) {
+                            iterator.remove();
+                        }
+                    }
+                });
             }
         }
     }

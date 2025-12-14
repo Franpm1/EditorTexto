@@ -4,6 +4,7 @@ import common.VectorClock;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class ServerConnectorImpl implements IServerConnector {
     private final List<RemoteServerInfo> backupServers;
@@ -13,41 +14,43 @@ public class ServerConnectorImpl implements IServerConnector {
     public ServerConnectorImpl(int myId, List<RemoteServerInfo> backupServers) {
         this.myId = myId;
         this.backupServers = backupServers;
-        // Crear ThreadPool con tamaño fijo igual al número de backups máximos
+        // Configurar timeouts RMI globales
+        System.setProperty("sun.rmi.transport.tcp.responseTimeout", "1000");
+        System.setProperty("sun.rmi.transport.tcp.readTimeout", "1000");
+        System.setProperty("sun.rmi.transport.connectionTimeout", "1000");
+        System.setProperty("sun.rmi.transport.proxy.connectTimeout", "1000");
+        System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "1000");
+        
         this.replicaPool = Executors.newFixedThreadPool(backupServers.size());
     }
 
     @Override
     public void propagateToBackups(String fullDocument, VectorClock clockSnapshot) {
-        // Log reducido para mejor performance
-        // System.out.println("Replicando a backups...");
-        
         for (RemoteServerInfo info : backupServers) {
             if (info.getServerId() == myId) continue;
 
-            // Usar ThreadPool en vez de crear nuevo Thread cada vez
             replicaPool.execute(() -> {
                 try {
-                    // System.out.println("Enviando a servidor " + info.getServerId() + "...");
                     info.getStub().applyReplication(fullDocument, clockSnapshot);
-                    // System.out.println("Replicado a servidor " + info.getServerId());
                 } catch (Exception e) {
-                    System.out.println("Servidor " + info.getServerId() + " no disponible");
+                    // Silencioso
                 }
             });
         }
     }
 
-    // NUEVO: Para que EditorServiceImpl pueda buscar el líder
     public List<RemoteServerInfo> getAllServers() {
         return backupServers;
     }
 
-    // NUEVO: Método para cerrar el ThreadPool de manera ordenada (opcional)
     public void shutdown() {
-        if (replicaPool != null && !replicaPool.isShutdown()) {
-            replicaPool.shutdown();
-            System.out.println("ThreadPool de réplicas cerrado");
+        replicaPool.shutdown();
+        try {
+            if (!replicaPool.awaitTermination(1, TimeUnit.SECONDS)) {
+                replicaPool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            replicaPool.shutdownNow();
         }
     }
 }

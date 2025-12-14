@@ -14,15 +14,16 @@ public class HeartbeatMonitor implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("Monitor iniciado. Buscando líder...");
+        System.out.println("Monitor iniciado (intervalo: " + intervalMs + "ms)");
         
-        // 1. ELECCIÓN INMEDIATA al iniciar
+        // Elección inmediata pero con breve pausa para que todos arranquen
+        try { Thread.sleep(500); } catch (InterruptedException e) {}
+        
         if (!serverState.isLeader()) {
-            System.out.println("Iniciando elección al arrancar...");
             bully.startElectionOnStartup();
         }
         
-        // 2. Monitoreo periódico
+        // Monitoreo más rápido
         while (true) {
             try { Thread.sleep(intervalMs); } catch (InterruptedException e) {}
             
@@ -30,16 +31,16 @@ public class HeartbeatMonitor implements Runnable {
 
             RemoteServerInfo leader = bully.getCurrentLeaderInfo();
             if (leader == null) {
-                System.out.println("No hay líder conocido. Reiniciando elección...");
+                System.out.println("No hay líder, reiniciando elección...");
                 bully.onLeaderDown();
                 continue;
             }
             
             try {
+                // Heartbeat rápido
                 leader.getStub().heartbeat();
-                System.out.println("Líder " + leader.getServerId() + " responde");
             } catch (Exception e) {
-                System.out.println("Líder " + leader.getServerId() + " NO responde");
+                System.out.println("Líder NO responde");
                 serverState.setCurrentLeaderId(-1);
                 bully.onLeaderDown();
             }
