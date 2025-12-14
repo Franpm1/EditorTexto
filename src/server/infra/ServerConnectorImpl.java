@@ -2,8 +2,7 @@ package server.infra;
 
 import common.VectorClock;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 public class ServerConnectorImpl implements IServerConnector {
     private final List<RemoteServerInfo> backupServers;
@@ -17,18 +16,25 @@ public class ServerConnectorImpl implements IServerConnector {
 
     @Override
     public void propagateToBackups(String fullDocument, VectorClock clockSnapshot) {
-        System.out.println("Replicando a backups (en paralelo)...");
+        // Versión por defecto: sin broadcast en backups
+        propagateToBackups(fullDocument, clockSnapshot, false);
+    }
+    
+    // NUEVO: con control de broadcast
+    public void propagateToBackups(String fullDocument, VectorClock clockSnapshot, boolean askForBroadcast) {
+        System.out.println("[RÉPLICA] Enviando a backups (broadcast=" + askForBroadcast + ")...");
         
         for (RemoteServerInfo info : backupServers) {
             if (info.getServerId() == myId) continue;
 
             executor.submit(() -> {
                 try {
-                    System.out.println("Enviando a servidor " + info.getServerId() + "...");
+                    // Enviamos la réplica
                     info.getStub().applyReplication(fullDocument, clockSnapshot);
-                    System.out.println("Replicado a servidor " + info.getServerId());
+                    System.out.println("  ✓ Réplica enviada a servidor " + info.getServerId());
+                    
                 } catch (Exception e) {
-                    System.out.println("Servidor " + info.getServerId() + " no disponible");
+                    System.out.println("  ✗ Réplica falló para servidor " + info.getServerId() + ": " + e.getMessage());
                 }
             });
         }

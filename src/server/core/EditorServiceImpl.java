@@ -13,6 +13,10 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     private IServerConnector backupConnector;
     private final ServerState serverState;
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    
+    // Control para evitar bucles
+    private boolean isApplyingReplication = false;
+    private String lastReplicationHash = "";
 
     public EditorServiceImpl(Document doc, Notifier notifier, ServerState state) throws RemoteException {
         super();
@@ -27,55 +31,57 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void executeOperation(Operation op) throws RemoteException {
-        System.out.println("Operación recibida de " + op.getOwner() + ": " + op.getType());
+        System.out.println("📨 Operación recibida de " + op.getOwner() + ": " + op.getType() + " pos=" + op.getPosition());
         
         if (serverState.isLeader()) {
-            // LÍDER: procesar localmente inmediatamente
-            document.applyOperation(op);
-            notifier.broadcast(document.getContent(), document.getClockCopy());
+            // *** SÓLO EL LÍDER procesa operaciones de clientes ***
+            System.out.println("👑 Soy líder, procesando operación...");
             
-            // Réplica en segundo plano (no bloquea)
+            // 1. Aplicar localmente
+            document.applyOperation(op);
+            
+            // 2. Broadcast SOLO a mis clientes locales
+            notifier.broadcast(document.getContent(), document.getClockCopy());
+            System.out.println("📢 Broadcast a mis " + notifier.getClientCount() + " clientes locales");
+            
+            // 3. Réplica a backups (pero NO les digas que hagan broadcast)
             if (backupConnector != null) {
-                backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
+                backupConnector.propagateToBackups(
+                    document.getContent(), 
+                    document.getClockCopy(),
+                    false // ¡IMPORTANTE! No pedir broadcast a backups
+                );
             }
         } 
         else {
-            // BACKUP: redirigir con TIMEOUT
-            System.out.println("Redirigiendo operación al líder...");
+            // *** BACKUP: redirigir al líder SIN procesar localmente ***
+            System.out.println("🔄 Soy backup, redirigiendo al líder...");
             
             RemoteServerInfo leaderInfo = findLeaderInfo();
             
             if (leaderInfo != null) {
-                // Intentar redirección con timeout
-                CompletableFuture<Boolean> redirectFuture = CompletableFuture.supplyAsync(() -> {
-                    try {
-                        leaderInfo.getStub().executeOperation(op);
-                        return true;
-                    } catch (Exception e) {
-                        return false;
-                    }
-                }, executor);
-                
                 try {
-                    // Timeout corto: 1.5 segundos
-                    boolean success = redirectFuture.get(1500, TimeUnit.MILLISECONDS);
-                    
-                    if (success) {
-                        System.out.println("✓ Operación redirigida al líder");
-                        return; // Éxito, no hacer nada más
-                    }
-                } catch (TimeoutException e) {
-                    System.out.println("⚠️ Timeout al redirigir al líder");
+                    leaderInfo.getStub().executeOperation(op);
+                    System.out.println("✓ Redirigido al líder " + serverState.getCurrentLeaderId());
                 } catch (Exception e) {
-                    System.out.println("⚠️ Error al redirigir: " + e.getMessage());
+                    System.out.println("⚠️ Error redirigiendo: " + e.getMessage());
+                    // Fallback: sólo si el líder NO responde
+                    if (shouldApplyLocallyAsFallback()) {
+                        document.applyOperation(op);
+                        notifier.broadcast(document.getContent(), document.getClockCopy());
+                    }
                 }
+            } else {
+                System.out.println("⚠️ No hay líder, aplicando localmente (modo emergencia)");
+                document.applyOperation(op);
+                notifier.broadcast(document.getContent(), document.getClockCopy());
             }
-            
-            // Fallback: aplicar localmente si el líder no responde
-            System.out.println("Aplicando operación localmente (fallback)");
-            document.applyOperation(op);
-            notifier.broadcast(document.getContent(), document.getClockCopy());
         }
+    }
+
+    private boolean shouldApplyLocallyAsFallback() {
+        // Sólo aplicar localmente si no hemos tenido líder por un tiempo
+        return serverState.getCurrentLeaderId() == -1;
     }
 
     private RemoteServerInfo findLeaderInfo() {
@@ -92,7 +98,7 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void registerClient(IClientCallback client, String username) throws RemoteException {
-        System.out.println("Cliente registrado: " + username);
+        System.out.println("👤 Cliente registrado: " + username);
         notifier.registerClient(client);
         client.syncState(document.getContent(), document.getClockCopy());
     }
@@ -104,41 +110,69 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void becomeLeader(String doc, VectorClock clock) throws RemoteException {
-        System.out.println("Recibiendo liderazgo con sincronización...");
+        System.out.println("🎯 Recibiendo liderazgo con estado sincronizado...");
         document.overwriteState(doc, clock);
         serverState.setLeader(true);
         serverState.setCurrentLeaderId(serverState.getMyServerId());
-        System.out.println("✅ Ahora soy el líder");
         
-        // CRÍTICO: Notificar a mis clientes locales INMEDIATAMENTE
+        // CRÍTICO: Notificar a MIS clientes locales del nuevo estado
         notifier.broadcast(document.getContent(), document.getClockCopy());
-        System.out.println("📢 Clientes locales notificados del nuevo estado");
+        System.out.println("✅ Ahora soy líder - clientes notificados");
     }
 
     @Override
     public void declareLeader(int leaderId) throws RemoteException {
-        System.out.println("Nuevo líder declarado: servidor " + leaderId);
+        System.out.println("📢 Nuevo líder declarado: servidor " + leaderId);
         serverState.setCurrentLeaderId(leaderId);
         serverState.setLeader(leaderId == serverState.getMyServerId());
-        
-        // Si yo ERA el líder anterior y ahora otro es líder, debo notificar a mis clientes
-        // que ya no soy líder y que redirijan sus operaciones
-        if (serverState.getMyServerId() != leaderId && serverState.isLeader()) {
-            // Esto no debería pasar, pero por seguridad
-            serverState.setLeader(false);
-        }
     }
 
     @Override
     public DocumentSnapshot getCurrentState() throws RemoteException {
-        // Respuesta INMEDIATA sin procesamiento
         return new DocumentSnapshot(document.getContent(), document.getClockCopy());
     }
 
     @Override
     public void applyReplication(String doc, VectorClock clock) throws RemoteException {
-        // Aplicar réplica inmediatamente
-        document.overwriteState(doc, clock);
-        notifier.broadcast(document.getContent(), document.getClockCopy());
+        // *** ESTE ES EL CAMBIO CLAVE ***
+        // Réplica del líder: aplicar PERO NO hacer broadcast
+        
+        if (isApplyingReplication) {
+            System.out.println("⏸️  Ya estoy aplicando réplica, ignorando duplicado");
+            return;
+        }
+        
+        String replicationHash = doc + clock.toString();
+        if (lastReplicationHash.equals(replicationHash)) {
+            System.out.println("⏸️  Réplica duplicada, ignorando");
+            return;
+        }
+        
+        isApplyingReplication = true;
+        try {
+            System.out.println("🔄 Recibiendo réplica del líder...");
+            
+            // Aplicar el estado
+            document.overwriteState(doc, clock);
+            System.out.println("✓ Estado replicado: " + 
+                (doc.isEmpty() ? "(vacío)" : doc.length() + " caracteres"));
+            
+            lastReplicationHash = replicationHash;
+            
+            // *** NO HACER BROADCAST - los clientes ya fueron notificados por el líder ***
+            // Si haces broadcast aquí, crearás un bucle
+            
+        } finally {
+            isApplyingReplication = false;
+        }
+    }
+    
+    // Método para debugging
+    public void printStatus() {
+        System.out.println("=== STATUS Servidor " + serverState.getMyServerId() + " ===");
+        System.out.println("Es líder: " + serverState.isLeader());
+        System.out.println("Líder actual: " + serverState.getCurrentLeaderId());
+        System.out.println("Documento: " + document.getContent().length() + " chars");
+        System.out.println("Clientes locales: " + notifier.getClientCount());
     }
 }
