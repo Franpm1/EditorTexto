@@ -27,14 +27,13 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     public void executeOperation(Operation op) throws RemoteException {
         System.out.println("Operacion recibida de cliente: " + op.getType() + " de " + op.getOwner());
         
-        // SI SOY LÍDER: procesar y replicar
         if (serverState.isLeader()) {
             System.out.println("Soy lider, procesando operacion...");
             
             // 1. Aplicar localmente
             document.applyOperation(op);
             
-            // 2. Broadcast solo a mis clientes locales (el líder)
+            // 2. Broadcast solo a mis clientes locales
             notifier.broadcast(document.getContent(), document.getClockCopy());
             
             // 3. Replicar a TODOS los backups
@@ -42,21 +41,17 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
                 backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
             }
         } 
-        // SI NO SOY LÍDER: redirigir al líder SIN aplicar localmente
         else {
             System.out.println("No soy lider, redirigiendo operacion al líder...");
             
-            // Buscar el líder
             RemoteServerInfo leaderInfo = findLeaderInfo();
             
             if (leaderInfo != null) {
                 try {
-                    // SOLO redirigir, NO aplicar localmente
                     leaderInfo.getStub().executeOperation(op);
                     System.out.println("Operacion redirigida al líder " + serverState.getCurrentLeaderId());
                 } catch (Exception e) {
                     System.out.println("Error redirigiendo al líder: " + e.getMessage());
-                    // Fallback: aplicar localmente si el líder no responde
                     document.applyOperation(op);
                     notifier.broadcast(document.getContent(), document.getClockCopy());
                 }
@@ -108,76 +103,11 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         System.out.println("Servidor " + leaderId + " se ha declarado LIDER.");
         serverState.setCurrentLeaderId(leaderId);
         serverState.setLeader(leaderId == serverState.getMyServerId());
-        
-        // NUEVO: Si yo era el líder anteriormente y ahora otro es líder,
-        // necesito sincronizar mi estado con el nuevo líder
-        if (serverState.getMyServerId() == leaderId) {
-            System.out.println("Yo soy el nuevo líder. Sincronizando estado...");
-            syncWithOtherServers();
-        }
     }
 
-    // NUEVO: Método para sincronizar estado cuando tomo liderazgo
-    private void syncWithOtherServers() {
-        System.out.println("Sincronizando mi estado con otros servidores...");
-        
-        if (backupConnector instanceof ServerConnectorImpl) {
-            ServerConnectorImpl connector = (ServerConnectorImpl) backupConnector;
-            
-            // Buscar el servidor con el vector clock más reciente
-            String latestContent = document.getContent();
-            VectorClock latestClock = document.getClockCopy();
-            
-            for (RemoteServerInfo info : connector.getAllServers()) {
-                if (info.getServerId() == serverState.getMyServerId()) continue;
-                
-                try {
-                    DocumentSnapshot snapshot = info.getStub().getCurrentState();
-                    System.out.println("Estado del servidor " + info.getServerId() + ": " + snapshot.getClock());
-                    
-                    // Si este servidor tiene un estado más reciente (comparar vector clocks)
-                    if (isClockNewer(snapshot.getClock(), latestClock)) {
-                        latestContent = snapshot.getContent();
-                        latestClock = snapshot.getClock();
-                        System.out.println("Servidor " + info.getServerId() + " tiene estado más reciente");
-                    }
-                } catch (Exception e) {
-                    System.out.println("No se pudo obtener estado del servidor " + info.getServerId());
-                }
-            }
-            
-            // Actualizar mi estado con el más reciente
-            document.overwriteState(latestContent, latestClock);
-            System.out.println("Estado sincronizado: " + latestContent);
-        }
-    }
-    
-    // NUEVO: Comparar vector clocks
-    private boolean isClockNewer(VectorClock clock1, VectorClock clock2) {
-        // clock1 es más nuevo si para algún índice tiene un valor mayor
-        // y para ningún índice tiene un valor menor
-        boolean atLeastOneGreater = false;
-        boolean atLeastOneLess = false;
-        
-        int maxSize = Math.max(clock1.toString().length(), clock2.toString().length());
-        
-        // Parsear los strings del vector clock
-        String s1 = clock1.toString().replaceAll("\\[|\\]", "");
-        String s2 = clock2.toString().replaceAll("\\[|\\]", "");
-        String[] parts1 = s1.split(",");
-        String[] parts2 = s2.split(",");
-        
-        int minLength = Math.min(parts1.length, parts2.length);
-        
-        for (int i = 0; i < minLength; i++) {
-            int v1 = Integer.parseInt(parts1[i].trim());
-            int v2 = Integer.parseInt(parts2[i].trim());
-            
-            if (v1 > v2) atLeastOneGreater = true;
-            if (v1 < v2) atLeastOneLess = true;
-        }
-        
-        return atLeastOneGreater && !atLeastOneLess;
+    @Override
+    public DocumentSnapshot getCurrentState() throws RemoteException {
+        return new DocumentSnapshot(document.getContent(), document.getClockCopy());
     }
 
     @Override
@@ -187,13 +117,7 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         // 1. Aplicar el estado replicado
         document.overwriteState(doc, clock);
         
-        // 2. Broadcast a mis clientes locales (IMPORTANTE: backups también notifican)
+        // 2. Broadcast a mis clientes locales
         notifier.broadcast(document.getContent(), document.getClockCopy());
-    }
-
-    // NUEVO: Implementar método para obtener estado actual
-    @Override
-    public DocumentSnapshot getCurrentState() throws RemoteException {
-        return new DocumentSnapshot(document.getContent(), document.getClockCopy());
     }
 }
