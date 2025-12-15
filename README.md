@@ -1,156 +1,90 @@
 # Editor Colaborativo Distribuido
-Sistema de edición colaborativa en tiempo real implementado en **Java RMI** bajo una arquitectura **Primary-Backup** para alta disponibilidad. 
+Sistema de edición colaborativa en tiempo real implementado en **Java RMI** bajo una arquitectura **Primary-Backup** para alta disponibilidad. <br>
 Incorpora el **Algoritmo de Bully** para la elección dinámica de líder y utiliza **Relojes Vectoriales** (Vector Clocks) para gestionar la causalidad y consistencia eventual entre réplicas.
-
+# Esquemas
+### 1 . Arquitectura Lógica y Flujo de funcionamiento
+Ilustra el flujo de una operación iniciada en un nodo Backup. <br>
+Podemos observar la redirección automática de la operación hacia el servidor Líder, la propagación interna del estado a las réplicas y la sincronización final (callback) a todos los clientes conectados para garantizar que todos vean el documento actualizado.
 ``` mermaid
-flowchart TD
-    Start((Inicio)) --> CheckLeader{¿Soy el Líder?}
-    
-    %% Bucle principal si soy líder
-    CheckLeader -- SÍ --> Sleep[Dormir Intervalo]
-    Sleep --> CheckLeader
-    
-    %% Si NO soy líder
-    CheckLeader -- NO --> FindLeader[Buscar Info del Líder actual]
-    FindLeader --> PingLeader{¿Ping al Líder?}
-    
-    %% Si el líder responde, vuelvo a dormir
-    PingLeader -- Responde --> Sleep
-    
-    %% Si el líder falla, inicio la lógica de elección (SIN SUBGRAPH)
-    PingLeader -- Falla/Null --> Election[Inicia BullyElection]
-    
-    Election --> SearchHigher[Buscar Nodos con ID > mi ID]
-    SearchHigher --> HigherExists{¿Responde alguno?}
-    
-    %% Si existe uno mayor, simplemente duermo y espero
-    HigherExists -- SÍ --> Sleep
-    
-    %% Si no hay nadie mayor, tomo el liderazgo
-    HigherExists -- NO --> BecomeLeader[¡Me convierto en Líder!]
-    BecomeLeader --> Declare[Enviar 'declareLeader' a todos los menores]
-    
-    %% Vuelta al inicio
-    Declare --> CheckLeader
+---
+config:
+  look: classic
+  layout: dagre
+  theme: forest
+---
+flowchart TB
+ subgraph Clientes["Capa de Clientes"]
+        C1("Cliente A")
+        C2("Cliente B")
+        C3("Cliente C")
+  end
+ subgraph Cluster["Cluster de Servidores RMI"]
+        S1("Servidor X: BACKUP")
+        S2("Servidor Y: LÍDER")
+        S3("Servidor Z: BACKUP")
+  end
+    C1 -- "1. Op: Insertar Texto" --> S1
+    S1 -. "2. Redirigir Op al Líder" .-> S2
+    S2 == "3. Replicar Estado" ==> S1 & S3
+    S2 L_S2_C2_0@-- "4. Sync Cliente" --> C2
+    S1 -- "4. Sync Cliente" --> C1
+    S3 -- "4. Sync Cliente" --> C3
 
-    %% ESTILOS
-    %% linkStyle 2 es Sleep --> CheckLeader (negra discontinua)
-    %% linkStyle 12 es Declare --> CheckLeader (negra discontinua)
-    linkStyle 2,12 stroke:black,stroke-width:1px,stroke-dasharray: 5 5;
+     C1:::client
+     C2:::client
+     C3:::client
+     S1:::backup
+     S2:::leader
+     S3:::backup
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:black
+    classDef leader fill:#fff9c4,stroke:#fbc02d,stroke-width:4px,color:black
+    classDef backup fill:#f5f5f5,stroke:#9e9e9e,stroke-width:2px,stroke-dasharray: 5 5,color:black
+    style Clientes fill:#ffffff,stroke:#333,stroke-width:2px,color:black
+    style Cluster fill:#ffffff,stroke:#333,stroke-width:2px,color:black
+    linkStyle 0 stroke:#0277bd,stroke-width:2px,fill:none
+    linkStyle 1 stroke:#ef6c00,stroke-width:2px,stroke-dasharray: 5 5,fill:none
+    linkStyle 2 stroke:#2e7d32,stroke-width:3px,fill:none
+    linkStyle 3 stroke:#2e7d32,stroke-width:3px,fill:none
+    linkStyle 4 stroke:#7b1fa2,stroke-width:2px,fill:none
+    linkStyle 5 stroke:#7b1fa2,stroke-width:2px,fill:none
+    linkStyle 6 stroke:#7b1fa2,stroke-width:2px,fill:none
+
+    L_S2_C2_0@{ curve: natural }
 ```
-
-```mermaid
+### 2 . Lógica de elección del Líder y recuperación (Algoritmo de Bully)
+Se verifica continuamente la disponibilidad del líder mediante heartbeats periódicos. Ante la detección de una caída, se activa el protocolo de elección que garantiza que el servidor con el ID más alto disponible asuma el control y notifique al resto de nodos.
+``` mermaid
+---
+config:
+  theme: forest
+  look: classic
+---
 graph TD
-    %% Estilos para diferenciar roles
-    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
-    classDef leader fill:#fff9c4,stroke:#fbc02d,stroke-width:4px;
-    classDef backup fill:#f5f5f5,stroke:#9e9e9e,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef start fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:black;
+    classDef decision fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:black;
+    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:black;
+    style AlgoritmoBully fill:#ffffff,stroke:#333,stroke-width:2px,color:black
 
-    subgraph Nodos_Clientes [Capa de Clientes]
-        C1(Cliente A):::client
-        C2(Cliente B):::client
-        C3(Cliente C):::client
+    subgraph AlgoritmoBully [ ]
+        direction TB
+        
+        Start((Inicio)):::start --> CheckLeader{¿Soy el Líder?}:::decision
+        CheckLeader -- SÍ --> Sleep[Dormir Intervalo]:::process
+        Sleep --> CheckLeader
+        CheckLeader -- NO --> FindLeader[Buscar Info del Líder actual]:::process
+        FindLeader --> PingLeader{¿Ping al Líder?}:::decision
+        PingLeader -- Responde --> Sleep
+        PingLeader -- Falla/Null --> Election[Inicia BullyElection]:::process
+        
+        Election --> SearchHigher[Buscar Nodos con ID > mi ID]:::process
+        SearchHigher --> HigherExists{¿Responde alguno?}:::decision
+        HigherExists -- SÍ --> Sleep
+        HigherExists -- NO --> BecomeLeader[¡Me convierto en Líder!]:::process
+        BecomeLeader --> Declare[Enviar 'declareLeader' a todos los menores]:::process
+        Declare --> CheckLeader
     end
-
-    subgraph Nodos_Servidores [Cluster de Servidores - RMI]
-        S1(Servidor X: BACKUP):::backup
-        S2(Servidor Y: LÍDER):::leader
-        S3(Servidor Z: BACKUP):::backup
-    end
-
-    %% 1. ENLACES Y FLUJO DE OPERACIÓN (Escritura desde Backup)
-    C1 -- "1. executeOperation(op) <br/> [RMI]" --> S1
-    
-    %% Redirección al líder
-    S1 -.-> |"2. Redirección al Líder <br/> (FindLeader + RMI)"| S2
-
-    %% 2. PROPAGACIÓN DE CAMBIOS (Desde el Líder)
-    S2 == "3. propagateToBackups <br/> (Replicación)" ==> S1
-    S2 == "3. propagateToBackups <br/> (Replicación)" ==> S3
-
-    %% 3. ACTUALIZACIÓN A CLIENTES (Callbacks)
-    S2 -- "4. syncState <br/> (Callback)" --> C2
-    S1 -- "5. syncState <br/> (Callback)" --> C1
-    S3 -- "5. syncState <br/> (Callback)" --> C3
-
-    %% Nota explicativa
-    linkStyle 0 stroke:blue,stroke-width:2px;
-    linkStyle 1 stroke:orange,stroke-width:2px;
-    linkStyle 2,3 stroke:green,stroke-width:3px;
-```
-
-```mermaid
-classDiagram
-    %% Interfaces Comunes
-    class IEditorService {
-        <<interface>>
-        +executeOperation(op)
-        +registerClient(client, username)
-        +heartbeat()
-        +declareLeader(id)
-        +applyReplication(doc, clock)
-    }
-    class IClientCallback {
-        <<interface>>
-        +syncState(doc, clock)
-    }
-
-    %% Cliente
-    class ClientImpl {
-        -ConsoleUI ui
-        +syncState()
-    }
-    class ConsoleUI {
-        -IEditorService server
-        +start()
-        +processCommand()
-    }
-
-    %% Servidor Core
-    class EditorServiceImpl {
-        -Document document
-        -ServerState serverState
-        -Notifier notifier
-        +executeOperation()
-    }
-    class Document {
-        -StringBuilder content
-        -VectorClock vectorClock
-        +applyOperation()
-        +overwriteState()
-    }
-    
-    %% Servidor Infraestructura
-    class ServerState {
-        -boolean isLeader
-        -int currentLeaderId
-    }
-    class BullyElection {
-        +startElectionOnStartup()
-        +onLeaderDown()
-    }
-    class HeartbeatMonitor {
-        +run()
-    }
-    class Notifier {
-        -List~IClientCallback~ clients
-        +broadcast()
-    }
-
-    %% Relaciones
-    IEditorService <|.. EditorServiceImpl
-    IClientCallback <|.. ClientImpl
-    
-    ClientImpl --> ConsoleUI : actualiza
-    ConsoleUI --> IEditorService : llama (RMI)
-    
-    EditorServiceImpl --> Document : modifica
-    EditorServiceImpl --> ServerState : consulta estado
-    EditorServiceImpl --> Notifier : usa
-    
-    HeartbeatMonitor --> BullyElection : activa elección
-    BullyElection --> ServerState : modifica líder
-    BullyElection --> IEditorService : llama a otros nodos
+    linkStyle 2,12 stroke:#333,stroke-width:2px,stroke-dasharray: 5 5;
+    linkStyle 0,1,3,4,5,6,7,8,9,10,11 stroke:#333,stroke-width:2px;
 ```
 
 ```mermaid
