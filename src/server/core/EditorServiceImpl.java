@@ -103,49 +103,47 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         System.out.println("Ahora soy el líder.");
     }
 
-    // En EditorServiceImpl.java, reemplaza el método declareLeader:
-
-@Override
-public void declareLeader(int leaderId) throws RemoteException {
-    System.out.println("📢 DECLARACIÓN DE LÍDER RECIBIDA: Servidor " + leaderId + " es el LÍDER.");
-    
-    // Solo actualizar si el nuevo líder es diferente
-    if (serverState.getCurrentLeaderId() != leaderId) {
-        System.out.println("Actualizando líder de " + serverState.getCurrentLeaderId() + " a " + leaderId);
-    }
-    
-    // Actualizar estado local
-    serverState.setCurrentLeaderId(leaderId);
-    serverState.setLeader(leaderId == serverState.getMyServerId());
-    
-    // Replicar esta información a otros servidores (propagación en cascada)
-    if (backupConnector instanceof ServerConnectorImpl && !serverState.isLeader()) {
-        ServerConnectorImpl connector = (ServerConnectorImpl) backupConnector;
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+    @Override
+    public void declareLeader(int leaderId) throws RemoteException {
+        System.out.println("📢 DECLARACIÓN DE LÍDER RECIBIDA: Servidor " + leaderId);
         
-        for (RemoteServerInfo info : connector.getAllServers()) {
-            if (info.getServerId() == serverState.getMyServerId() || 
-                info.getServerId() == leaderId) continue;
-                
-            pool.execute(() -> {
-                try {
-                    // Solo propagar si no somos el líder
-                    info.getStub().declareLeader(leaderId);
-                } catch (Exception e) {
-                    // Ignorar errores de propagación
-                }
-            });
+        // 1. VERIFICACIÓN CRÍTICA: Si ya soy líder, ignorar cualquier otra declaración
+        if (serverState.isLeader()) {
+            System.out.println("⚠️  ¡YO soy el líder! Ignorando declaración de servidor " + leaderId);
+            return; // No aceptar otro líder si ya soy líder
         }
-        pool.shutdown();
+        
+        // 2. VERIFICACIÓN: Ignorar si el nuevo líder tiene ID MENOR que el actual
+        // (en Bully, el líder debe ser el ID más alto disponible)
+        int currentLeader = serverState.getCurrentLeaderId();
+        if (currentLeader != -1 && leaderId < currentLeader) {
+            System.out.println("⚠️  Ignorando líder con ID menor (" + leaderId + " < " + currentLeader + ")");
+            return;
+        }
+        
+        // 3. VERIFICACIÓN: Si es el mismo líder, solo registrar (evitar loops)
+        if (currentLeader == leaderId) {
+            System.out.println("ℹ️  Líder " + leaderId + " ya establecido.");
+            return;
+        }
+        
+        System.out.println("🔄 Actualizando líder de " + currentLeader + " a " + leaderId);
+        
+        // 4. Actualizar estado local SOLAMENTE
+        serverState.setCurrentLeaderId(leaderId);
+        serverState.setLeader(leaderId == serverState.getMyServerId());
+        
+        // 5. IMPORTANTE: NO PROPAGAR A OTROS SERVIDORES
+        // Solo el líder original debe propagar, no los receptores
+        // Esto evita ciclos de propagación infinita
+        
+        if (serverState.getMyServerId() == leaderId) {
+            System.out.println("👑 ¡YO soy el nuevo líder! Sincronizando estado...");
+            syncWithOtherServers();
+        } else {
+            System.out.println("✅ Reconozco a servidor " + leaderId + " como líder");
+        }
     }
-    
-    if (serverState.getMyServerId() == leaderId) {
-        System.out.println("👑 ¡YO soy el nuevo líder! Sincronizando estado...");
-        syncWithOtherServers();
-    } else {
-        System.out.println("✅ Reconozco a servidor " + leaderId + " como líder");
-    }
-}
 
     // NUEVO: Método para sincronizar estado cuando tomo liderazgo
     private void syncWithOtherServers() {
