@@ -12,13 +12,13 @@ public class RemoteServerInfo {
     private IEditorService cachedStub;
 
     static {
-        // Timeouts globales más agresivos
-        System.setProperty("sun.rmi.transport.tcp.responseTimeout", "800");
-        System.setProperty("sun.rmi.transport.tcp.readTimeout", "800");
-        System.setProperty("sun.rmi.transport.connectionTimeout", "800");
-        System.setProperty("sun.rmi.transport.proxy.connectTimeout", "800");
-        System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "800");
-        System.setProperty("sun.rmi.transport.tcp.connectionPoolSize", "2");
+        // Aumentamos a 2.5 segundos para dar tiempo a la reconexión y sincronización
+        System.setProperty("sun.rmi.transport.tcp.responseTimeout", "2500");
+        System.setProperty("sun.rmi.transport.tcp.readTimeout", "2500");
+        System.setProperty("sun.rmi.transport.connectionTimeout", "2500");
+        System.setProperty("sun.rmi.transport.proxy.connectTimeout", "2500");
+        System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "2500");
+        System.setProperty("sun.rmi.transport.tcp.connectionPoolSize", "4");
     }
 
     public RemoteServerInfo(int serverId, String host, int port, String bindingName) {

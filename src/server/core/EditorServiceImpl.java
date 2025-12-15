@@ -186,9 +186,32 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void applyReplication(String doc, VectorClock clock) throws RemoteException {
-        System.out.println("Replicacion recibida del líder");
+        // --- PROTECCIÓN DE CONSISTENCIA ---
+        VectorClock myClock = document.getClockCopy();
         
+        // Si el reloj que llega es "cero" o muy viejo, y yo tengo datos avanzados,
+        // significa que el líder acaba de reiniciarse mal. LO IGNORAMOS.
+        boolean incomingIsNewer = VectorClockComparator.isClockNewer(clock, myClock);
+        String myClockStr = myClock.toString();
+        String incomingClockStr = clock.toString();
+
+        // Si no es más nuevo y no son iguales, rechazamos para proteger nuestros datos.
+        if (!incomingIsNewer && !myClockStr.equals(incomingClockStr)) {
+             // Verificación extra: Si el documento local tiene contenido y el entrante está vacío
+             if (document.getContent().length() > 0 && doc.length() == 0) {
+                 System.err.println("🛡️ BLOQUEADA replicación peligrosa (Líder Amnésico).");
+                 System.err.println("   Mío: " + myClock + " | Líder: " + clock);
+                 return; 
+             }
+        }
+        // ----------------------------------
+
+        System.out.println("Replicacion válida recibida. Actualizando estado.");
+        
+        // 1. Aplicar el estado replicado
         document.overwriteState(doc, clock);
+        
+        // 2. Broadcast a mis clientes locales
         notifier.broadcast(document.getContent(), document.getClockCopy());
     }
 

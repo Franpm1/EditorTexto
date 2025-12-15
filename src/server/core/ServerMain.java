@@ -23,7 +23,8 @@ public class ServerMain {
             System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", "1000");
             System.setProperty("sun.rmi.dgc.ackTimeout", "1000");
 
-            String localIP = InetAddress.getLocalHost().getHostAddress();
+            //String localIP = InetAddress.getLocalHost().getHostAddress();
+            String localIP = "127.0.0.1";   
             System.setProperty("java.net.preferIPv4Stack", "true");
             System.setProperty("java.rmi.server.hostname", localIP);
 

@@ -54,18 +54,10 @@ public class ConsoleUI {
     }
 
     private void clearScreen() {
-        try {
-            if (System.getProperty("os.name").contains("Windows")) {
-                new ProcessBuilder("cmd", "/c", "cls").inheritIO().start().waitFor();
-            } else {
-                System.out.print("\033[H\033[2J");
-                System.out.flush();
-            }
-        } catch (Exception e) {
-            // Si falla, solo imprimimos líneas nuevas
-            System.out.println("\n".repeat(50));
-        }
-    }
+        // SOLUCIÓN SEGURA: Imprimir saltos de línea.
+        // Evita usar ProcessBuilder/cls porque interfiere con el buffer 
+        // de entrada (System.in) cuando hay escritura concurrente.
+        System.out.println("\n".repeat(50));    }
 
     public void start() {
         displayCurrentState();

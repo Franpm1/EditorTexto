@@ -34,6 +34,7 @@ public class ServerConnectorImpl implements IServerConnector {
                     info.getStub().applyReplication(fullDocument, clockSnapshot);
                 } catch (Exception e) {
                     // Silencioso
+                    System.err.println("❌ ERROR replicando a Servidor " + info.getServerId() + ": " + e.getMessage());
                 }
             });
         }

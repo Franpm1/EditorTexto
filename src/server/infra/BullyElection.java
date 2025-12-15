@@ -103,56 +103,66 @@ public class BullyElection {
     }
 
     private void syncStateBeforeBecomingLeader() {
-        System.out.println("🔄 BULLY: Sincronizando estado antes de ser líder...");
+        System.out.println("🔄 Fase de Sincronización: Buscando el estado más reciente...");
         
         String latestContent = "";
-        common.VectorClock latestClock = null;
-        boolean gotState = false;
+        common.VectorClock latestClock = new common.VectorClock(0); // Reloj vacío inicial
+        boolean foundState = false;
+        
+        // Timeout generoso para asegurar que recibimos los datos pesados
+        int syncTimeout = 2000; 
         
         ExecutorService syncPool = Executors.newCachedThreadPool();
         List<Future<common.DocumentSnapshot>> futures = new java.util.ArrayList<>();
         
+        // Lanzar peticiones a TODOS los nodos
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
             
             futures.add(syncPool.submit(() -> {
                 try {
+                    System.out.println("   -> Pidiendo estado a nodo " + info.getServerId());
                     return info.getStub().getCurrentState();
                 } catch (Exception e) {
-                    return null;
+                    return null; // Si falla, lo ignoramos
                 }
             }));
         }
         
-        for (int i = 0; i < futures.size(); i++) {
+        // Procesar respuestas
+        for (Future<common.DocumentSnapshot> future : futures) {
             try {
-                common.DocumentSnapshot snapshot = futures.get(i).get(2000, TimeUnit.MILLISECONDS);
+                common.DocumentSnapshot snapshot = future.get(syncTimeout, TimeUnit.MILLISECONDS);
                 if (snapshot != null) {
-                    if (!gotState) {
+                    // Si es la primera respuesta o si este reloj es más nuevo que el que tengo guardado
+                    if (!foundState || common.VectorClockComparator.isClockNewer(snapshot.getClock(), latestClock)) {
                         latestContent = snapshot.getContent();
                         latestClock = snapshot.getClock();
-                        gotState = true;
-                    } else if (VectorClockComparator.isClockNewer(snapshot.getClock(), latestClock)) {
-                        latestContent = snapshot.getContent();
-                        latestClock = snapshot.getClock();
+                        foundState = true;
+                        System.out.println("      ! Nuevo mejor estado encontrado (Clock: " + latestClock + ")");
                     }
                 }
             } catch (Exception e) {
-                // Timeout, continuar
+                // Timeout o error en un nodo específico, seguimos con los demás
             }
         }
         
         syncPool.shutdownNow();
         
-        if (gotState) {
+        // APLICAR EL ESTADO RECUPERADO
+        if (foundState) {
+            System.out.println("✅ Sincronización completada. Recuperado estado con reloj: " + latestClock);
             try {
-                myServiceStub.becomeLeader(latestContent, latestClock);
+                // Forzamos la actualización del documento local antes de ser líder
+                myServiceStub.becomeLeader(latestContent, latestClock); 
             } catch (Exception e) {
-                System.out.println("⚠️ BULLY: Error al sincronizar estado");
+                e.printStackTrace();
             }
+        } else {
+            System.out.println("⚠️ No se encontró estado previo en la red. Iniciando como documento nuevo.");
         }
     }
-
+    
     private void becomeLeaderNow() {
         System.out.println("👑 BULLY: DECLARÁNDOME LÍDER (ID " + state.getMyServerId() + ")");
         
