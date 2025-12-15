@@ -1,6 +1,15 @@
 # Editor Colaborativo Distribuido
 Sistema de edición colaborativa en tiempo real implementado en **Java RMI** bajo una arquitectura **Primary-Backup** para alta disponibilidad. <br>
 Incorpora el **Algoritmo de Bully** para la elección dinámica de líder y utiliza **Relojes Vectoriales** (Vector Clocks) para gestionar la causalidad y consistencia eventual entre réplicas.
+# Compilacion y uso
+```
+Para compilar se pueden hacer una de las dos opciones:
+	1. Ejecutar el siguiente comando en cmd:
+		javac -encoding UTF-8 -d bin src/common/*.java src/client/*.java src/server/core/*.java src/server/infra/*.java
+	2. Ejecutar los ficheros compilar.bat , o compilar-lanzar.bat (con los argumentos de <ID> y <PUERTO>) si se desea ejecutar.
+
+Si se ejecuta cualquiera de los dos compiladores, se intentará crear el directorio bin para almacenar los .class generados por la compilación.
+```
 # Esquemas
 ### 1 . Arquitectura Lógica y Flujo de funcionamiento
 Ilustra el flujo de una operación iniciada en un nodo Backup. <br>
