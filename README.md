@@ -87,7 +87,7 @@ graph TD
     linkStyle 0,1,3,4,5,6,7,8,9,10,11 stroke:#333,stroke-width:2px;
 ```
 ### 3. Protocolo de Comunicación y Replicación (Vista de Secuencia)
-Diagrama de secuencia que detalla el flujo de mensajes RMI durante una operación de escritura iniciada en un nodo Backup.
+Diagrama de secuencia que detalla el flujo de mensajes RMI durante una operación de escritura iniciada en un nodo Backup. Para una correcta visualización usar un tema claro.
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'mainBkg': '#ffffff', 'actorBkg': '#e1f5fe', 'actorBorder': '#01579b', 'signalColor': '#000000', 'signalTextColor': '#000000', 'noteBkgColor': '#fff9c4', 'noteBorderColor': '#fbc02d', 'activationBorderColor': '#666', 'activationBkgColor': '#f5f5f5', 'sequenceNumberColor': '#000000'}}}%%
 sequenceDiagram
