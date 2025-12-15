@@ -17,13 +17,18 @@ public class BullyElection {
     }
 
     public void startElectionOnStartup() {
-        System.out.println("🔍 Buscando servidores con ID mayor...");
-        boolean foundHigher = false;
+        System.out.println("🔍 BULLY: Iniciando elección al arrancar (ID: " + state.getMyServerId() + ")...");
+        
+        // Pequeña pausa para estabilización
+        try { Thread.sleep(1000); } catch (InterruptedException e) {}
+        
         int myId = state.getMyServerId();
-
-        // Pool temporal para checks rápidos
+        boolean foundHigher = false;
+        int highestRespondingId = -1;
+        
         ExecutorService quickPool = Executors.newCachedThreadPool();
         
+        // BULLY: Preguntar a TODOS los servidores con ID mayor
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() > myId) {
                 Future<Boolean> future = quickPool.submit(() -> {
@@ -36,77 +41,69 @@ public class BullyElection {
                 });
                 
                 try {
-                    // Timeout MUY corto: 800ms
-                    if (future.get(800, TimeUnit.MILLISECONDS)) {
+                    if (future.get(1500, TimeUnit.MILLISECONDS)) {
                         foundHigher = true;
-                        System.out.println("✓ Servidor " + info.getServerId() + " responde");
-                        state.setCurrentLeaderId(info.getServerId());
-                        break; // Con uno es suficiente
+                        highestRespondingId = Math.max(highestRespondingId, info.getServerId());
+                        System.out.println("✓ BULLY: Servidor " + info.getServerId() + " responde (ID mayor)");
                     }
                 } catch (TimeoutException e) {
-                    System.out.println("✗ Servidor " + info.getServerId() + " timeout");
+                    System.out.println("✗ BULLY: Servidor " + info.getServerId() + " timeout");
                     future.cancel(true);
                 } catch (Exception e) {
-                    System.out.println("✗ Servidor " + info.getServerId() + " error");
+                    System.out.println("✗ BULLY: Servidor " + info.getServerId() + " error");
                 }
             }
         }
         
         quickPool.shutdownNow();
-
-        if (!foundHigher) {
-            System.out.println("✅ Soy el líder.");
+        
+        // BULLY: Si hay servidores con ID mayor activos, reconocer al de ID más alto como líder
+        if (foundHigher && highestRespondingId != -1) {
+            System.out.println("⏳ BULLY: Reconociendo a servidor " + highestRespondingId + " como líder (ID mayor)");
+            state.setCurrentLeaderId(highestRespondingId);
+            state.setLeader(false);
+        } 
+        // BULLY: Si NO hay servidores con ID mayor activos, yo soy el líder
+        else {
+            System.out.println("✅ BULLY: Soy el servidor con ID más alto activo");
             syncStateBeforeBecomingLeader();
             becomeLeaderNow();
-        } else {
-            System.out.println("⏳ Líder: " + state.getCurrentLeaderId());
         }
     }
 
     public void onLeaderDown() {
-        if (state.isLeader() || state.getCurrentLeaderId() != -1) {
+        if (state.isLeader()) {
             return;
         }
         
-        System.out.println("⚡ Iniciando elección...");
-        boolean foundHigher = false;
-        int myId = state.getMyServerId();
+        System.out.println("⚡ BULLY: Líder posiblemente caído, iniciando elección...");
         
-        ExecutorService quickPool = Executors.newCachedThreadPool();
-
-        for (RemoteServerInfo info : allServers) {
-            if (info.getServerId() > myId) {
-                Future<Boolean> future = quickPool.submit(() -> {
+        // Primero verificar si el líder realmente cayó
+        int currentLeader = state.getCurrentLeaderId();
+        if (currentLeader != -1) {
+            for (RemoteServerInfo info : allServers) {
+                if (info.getServerId() == currentLeader) {
                     try {
                         info.getStub().heartbeat();
-                        return true;
+                        System.out.println("✓ BULLY: El líder " + currentLeader + " SÍ responde");
+                        return;
                     } catch (Exception e) {
-                        return false;
-                    }
-                });
-                
-                try {
-                    if (future.get(500, TimeUnit.MILLISECONDS)) {
-                        foundHigher = true;
-                        System.out.println("✓ Nodo " + info.getServerId() + " responde");
+                        System.out.println("✗ BULLY: Confirmado - líder " + currentLeader + " NO responde");
                         break;
                     }
-                } catch (Exception e) {
-                    future.cancel(true);
                 }
             }
         }
         
-        quickPool.shutdownNow();
-
-        if (!foundHigher) {
-            syncStateBeforeBecomingLeader();
-            becomeLeaderNow();
-        }
+        // Líder confirmado caído
+        state.setCurrentLeaderId(-1);
+        System.out.println("🔄 BULLY: Iniciando nueva elección...");
+        
+        startElectionOnStartup(); // Reutilizar la lógica de elección
     }
 
     private void syncStateBeforeBecomingLeader() {
-        System.out.println("🔄 Sincronizando estado...");
+        System.out.println("🔄 BULLY: Sincronizando estado antes de ser líder...");
         
         String latestContent = "";
         common.VectorClock latestClock = null;
@@ -127,10 +124,9 @@ public class BullyElection {
             }));
         }
         
-        // Esperar respuestas rápidas
         for (int i = 0; i < futures.size(); i++) {
             try {
-                common.DocumentSnapshot snapshot = futures.get(i).get(800, TimeUnit.MILLISECONDS);
+                common.DocumentSnapshot snapshot = futures.get(i).get(2000, TimeUnit.MILLISECONDS);
                 if (snapshot != null) {
                     if (!gotState) {
                         latestContent = snapshot.getContent();
@@ -142,7 +138,7 @@ public class BullyElection {
                     }
                 }
             } catch (Exception e) {
-                // Timeout, continuar con siguiente
+                // Timeout, continuar
             }
         }
         
@@ -152,66 +148,55 @@ public class BullyElection {
             try {
                 myServiceStub.becomeLeader(latestContent, latestClock);
             } catch (Exception e) {
-                // Continuar igual
+                System.out.println("⚠️ BULLY: Error al sincronizar estado");
             }
         }
     }
 
     private void becomeLeaderNow() {
-        System.out.println("👑 DECLARÁNDOME LÍDER (ID " + state.getMyServerId() + ")");
+        System.out.println("👑 BULLY: DECLARÁNDOME LÍDER (ID " + state.getMyServerId() + ")");
         
-        // 1. Establecerme como líder localmente primero
         state.setLeader(true);
         state.setCurrentLeaderId(state.getMyServerId());
         
-        System.out.println("✅ Establecido como líder localmente. Notificando a otros servidores...");
+        // BULLY: Notificar a TODOS los servidores, especialmente a los que eran líderes
+        System.out.println("📢 BULLY: Notificando a todos los servidores...");
         
-        // 2. Notificar a TODOS los demás servidores DIRECTAMENTE
-        // Usar un pool limitado para controlar concurrencia
         ExecutorService notifyPool = Executors.newFixedThreadPool(3);
         
         for (RemoteServerInfo info : allServers) {
             if (info.getServerId() == state.getMyServerId()) continue;
             
             notifyPool.execute(() -> {
-                // Intentar notificar 2 veces máximo
-                for (int attempt = 0; attempt < 2; attempt++) {
+                for (int attempt = 0; attempt < 3; attempt++) {
                     try {
                         if (attempt > 0) {
-                            System.out.println("Reintentando notificar a servidor " + info.getServerId() + "...");
-                            Thread.sleep(300); // Pequeña pausa entre intentos
+                            System.out.println("BULLY: Reintentando notificar a servidor " + info.getServerId());
+                            Thread.sleep(300);
                         }
                         
                         info.getStub().declareLeader(state.getMyServerId());
-                        System.out.println("✓ Servidor " + info.getServerId() + " notificado");
-                        break; // Salir si tuvo éxito
-                        
+                        System.out.println("✓ BULLY: Servidor " + info.getServerId() + " notificado");
+                        break;
                     } catch (Exception e) {
-                        if (attempt == 1) { // Último intento falló
-                            System.out.println("✗ No se pudo notificar a servidor " + info.getServerId() + 
-                                             " (seguirá intentando con heartbeats)");
+                        if (attempt == 2) {
+                            System.out.println("✗ BULLY: No se pudo notificar a servidor " + info.getServerId());
                         }
                     }
                 }
             });
             
-            // Pequeña pausa entre notificaciones para evitar saturación
             try { Thread.sleep(100); } catch (InterruptedException e) {}
         }
         
         notifyPool.shutdown();
-        
-        // Esperar un tiempo razonable para que terminen las notificaciones
         try {
-            if (!notifyPool.awaitTermination(5, TimeUnit.SECONDS)) {
-                notifyPool.shutdownNow();
-                System.out.println("⚠️  Algunas notificaciones no terminaron a tiempo");
-            }
+            notifyPool.awaitTermination(5, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             notifyPool.shutdownNow();
         }
         
-        System.out.println("🎯 Liderazgo establecido. Servidor " + state.getMyServerId() + " es el líder.");
+        System.out.println("🎯 BULLY: Liderazgo establecido correctamente");
     }
 
     public RemoteServerInfo getCurrentLeaderInfo() {

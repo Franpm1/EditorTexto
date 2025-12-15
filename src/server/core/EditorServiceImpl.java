@@ -107,35 +107,43 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     public void declareLeader(int leaderId) throws RemoteException {
         System.out.println("📢 DECLARACIÓN DE LÍDER RECIBIDA: Servidor " + leaderId);
         
-        // 1. VERIFICACIÓN CRÍTICA: Si ya soy líder, ignorar cualquier otra declaración
-        if (serverState.isLeader()) {
-            System.out.println("⚠️  ¡YO soy el líder! Ignorando declaración de servidor " + leaderId);
-            return; // No aceptar otro líder si ya soy líder
-        }
-        
-        // 2. VERIFICACIÓN: Ignorar si el nuevo líder tiene ID MENOR que el actual
-        // (en Bully, el líder debe ser el ID más alto disponible)
+        int myId = serverState.getMyServerId();
         int currentLeader = serverState.getCurrentLeaderId();
-        if (currentLeader != -1 && leaderId < currentLeader) {
-            System.out.println("⚠️  Ignorando líder con ID menor (" + leaderId + " < " + currentLeader + ")");
+        
+        // 1. VERIFICACIÓN BULLY: Si el nuevo líder tiene ID MAYOR que el actual
+        if (currentLeader != -1 && leaderId > currentLeader) {
+            System.out.println("🔄 BULLY: Servidor " + leaderId + " tiene ID mayor que líder actual " + currentLeader);
+            
+            // Actualizar estado: reconocer al nuevo líder
+            serverState.setCurrentLeaderId(leaderId);
+            serverState.setLeader(leaderId == myId);
+            
+            if (leaderId == myId) {
+                System.out.println("👑 ¡YO soy el nuevo líder (Bully)! Sincronizando estado...");
+                syncWithOtherServers();
+            } else {
+                System.out.println("✅ Reconozco a servidor " + leaderId + " como nuevo líder (Bully)");
+            }
             return;
         }
         
-        // 3. VERIFICACIÓN: Si es el mismo líder, solo registrar (evitar loops)
+        // 2. Si el nuevo líder tiene ID MENOR, ignorar (solo si soy líder actual)
+        if (serverState.isLeader() && leaderId < myId) {
+            System.out.println("⚠️  BULLY: Ignorando servidor " + leaderId + " (ID menor que yo)");
+            return;
+        }
+        
+        // 3. Si es el mismo líder, solo registrar
         if (currentLeader == leaderId) {
             System.out.println("ℹ️  Líder " + leaderId + " ya establecido.");
             return;
         }
         
+        // 4. Caso normal: actualizar al nuevo líder
         System.out.println("🔄 Actualizando líder de " + currentLeader + " a " + leaderId);
         
-        // 4. Actualizar estado local SOLAMENTE
         serverState.setCurrentLeaderId(leaderId);
-        serverState.setLeader(leaderId == serverState.getMyServerId());
-        
-        // 5. IMPORTANTE: NO PROPAGAR A OTROS SERVIDORES
-        // Solo el líder original debe propagar, no los receptores
-        // Esto evita ciclos de propagación infinita
+        serverState.setLeader(leaderId == myId);
         
         if (serverState.getMyServerId() == leaderId) {
             System.out.println("👑 ¡YO soy el nuevo líder! Sincronizando estado...");
@@ -145,14 +153,12 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
         }
     }
 
-    // NUEVO: Método para sincronizar estado cuando tomo liderazgo
     private void syncWithOtherServers() {
         System.out.println("Sincronizando mi estado con otros servidores...");
         
         if (backupConnector instanceof ServerConnectorImpl) {
             ServerConnectorImpl connector = (ServerConnectorImpl) backupConnector;
             
-            // Buscar el servidor con el vector clock más reciente
             String latestContent = document.getContent();
             VectorClock latestClock = document.getClockCopy();
             
@@ -163,7 +169,6 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
                     DocumentSnapshot snapshot = info.getStub().getCurrentState();
                     System.out.println("Estado del servidor " + info.getServerId() + ": " + snapshot.getClock());
                     
-                    // Si este servidor tiene un estado más reciente usando comparador optimizado
                     if (VectorClockComparator.isClockNewer(snapshot.getClock(), latestClock)) {
                         latestContent = snapshot.getContent();
                         latestClock = snapshot.getClock();
@@ -174,7 +179,6 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
                 }
             }
             
-            // Actualizar mi estado con el más reciente
             document.overwriteState(latestContent, latestClock);
             System.out.println("Estado sincronizado: " + latestContent);
         }
@@ -184,14 +188,10 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     public void applyReplication(String doc, VectorClock clock) throws RemoteException {
         System.out.println("Replicacion recibida del líder");
         
-        // 1. Aplicar el estado replicado
         document.overwriteState(doc, clock);
-        
-        // 2. Broadcast a mis clientes locales (IMPORTANTE: backups también notifican)
         notifier.broadcast(document.getContent(), document.getClockCopy());
     }
 
-    // NUEVO: Implementar método para obtener estado actual
     @Override
     public DocumentSnapshot getCurrentState() throws RemoteException {
         return new DocumentSnapshot(document.getContent(), document.getClockCopy());
