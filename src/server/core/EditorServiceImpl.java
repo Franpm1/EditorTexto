@@ -27,14 +27,14 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
     public void executeOperation(Operation op) throws RemoteException {
         System.out.println("Operacion recibida de cliente: " + op.getType() + " de " + op.getOwner());
         
-        // SI SOY LÍDER: procesar y replicar
+        // El lider procesa y replica
         if (serverState.isLeader()) {
-            System.out.println("Soy lider, procesando operacion...");
+            System.out.println("Soy lider, procesando operacion");
             
-            // 1. Aplicar localmente
+            // Aplicar localmente
             document.applyOperation(op);
             
-            // 2. Broadcast solo a mis clientes locales (el líder)
+            // Broadcast solo a los clientes locales (el líder)
             notifier.broadcast(document.getContent(), document.getClockCopy());
             
             // 3. Replicar a TODOS los backups
@@ -42,16 +42,15 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
                 backupConnector.propagateToBackups(document.getContent(), document.getClockCopy());
             }
         } 
-        // SI NO SOY LÍDER: redirigir al líder SIN aplicar localmente
+        // So no es lider se redirige al líder sin aplicar localmente
         else {
-            System.out.println("No soy lider, redirigiendo operacion al líder...");
+            System.out.println("No soy lider, redirigiendo operacion al líder");
             
             // Buscar el líder
             RemoteServerInfo leaderInfo = findLeaderInfo();
             
             if (leaderInfo != null) {
                 try {
-                    // SOLO redirigir, NO aplicar localmente
                     leaderInfo.getStub().executeOperation(op);
                     System.out.println("Operacion redirigida al líder " + serverState.getCurrentLeaderId());
                 } catch (Exception e) {
@@ -91,12 +90,12 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void heartbeat() throws RemoteException {
-        // Simple respuesta de que estoy vivo
+        // Respuesta para le ping
     }
 
     @Override
     public void becomeLeader(String doc, VectorClock clock) throws RemoteException {
-        System.out.println("Recibiendo traspaso de liderazgo...");
+        System.out.println("Recibiendo traspaso de liderazgo");
         document.overwriteState(doc, clock);
         serverState.setLeader(true);
         serverState.setCurrentLeaderId(serverState.getMyServerId());
@@ -105,56 +104,56 @@ public class EditorServiceImpl extends UnicastRemoteObject implements IEditorSer
 
     @Override
     public void declareLeader(int leaderId) throws RemoteException {
-        System.out.println("📢 DECLARACIÓN DE LÍDER RECIBIDA: Servidor " + leaderId);
+        System.out.println("DECLARACIÓN DE LÍDER RECIBIDA: Servidor " + leaderId);
         
         int myId = serverState.getMyServerId();
         int currentLeader = serverState.getCurrentLeaderId();
         
-        // 1. VERIFICACIÓN BULLY: Si el nuevo líder tiene ID MAYOR que el actual
+        // VERIFICACIÓN BULLY: Si el nuevo líder tiene ID MAYOR que el actual
         if (currentLeader != -1 && leaderId > currentLeader) {
-            System.out.println("🔄 BULLY: Servidor " + leaderId + " tiene ID mayor que líder actual " + currentLeader);
+            System.out.println("BULLY: Servidor " + leaderId + " tiene ID mayor que líder actual " + currentLeader);
             
             // Actualizar estado: reconocer al nuevo líder
             serverState.setCurrentLeaderId(leaderId);
             serverState.setLeader(leaderId == myId);
             
             if (leaderId == myId) {
-                System.out.println("👑 ¡YO soy el nuevo líder (Bully)! Sincronizando estado...");
+                System.out.println("Nuevo líder (Bully), sincronizando estado");
                 syncWithOtherServers();
             } else {
-                System.out.println("✅ Reconozco a servidor " + leaderId + " como nuevo líder (Bully)");
+                System.out.println( "Reconozco a servidor " + leaderId + " como nuevo líder (Bully)");
             }
             return;
         }
         
-        // 2. Si el nuevo líder tiene ID MENOR, ignorar (solo si soy líder actual)
+        // Si el nuevo líder tiene ID MENOR, ignorar en caso que sea el líder actual
         if (serverState.isLeader() && leaderId < myId) {
-            System.out.println("⚠️  BULLY: Ignorando servidor " + leaderId + " (ID menor que yo)");
+            System.out.println("BULLY: Ignorando servidor " + leaderId + " (ID menor que yo)");
             return;
         }
         
-        // 3. Si es el mismo líder, solo registrar
+        // Si es el mismo líder, solo registrar
         if (currentLeader == leaderId) {
-            System.out.println("ℹ️  Líder " + leaderId + " ya establecido.");
+            System.out.println("Líder " + leaderId + " ya establecido.");
             return;
         }
         
-        // 4. Caso normal: actualizar al nuevo líder
-        System.out.println("🔄 Actualizando líder de " + currentLeader + " a " + leaderId);
+        // Caso normal: actualizar al nuevo líder
+        System.out.println("Actualizando líder de " + currentLeader + " a " + leaderId);
         
         serverState.setCurrentLeaderId(leaderId);
         serverState.setLeader(leaderId == myId);
         
         if (serverState.getMyServerId() == leaderId) {
-            System.out.println("👑 ¡YO soy el nuevo líder! Sincronizando estado...");
+            System.out.println("Nuevo líder, sincronizando estado");
             syncWithOtherServers();
         } else {
-            System.out.println("✅ Reconozco a servidor " + leaderId + " como líder");
+            System.out.println("Reconozco a servidor " + leaderId + " como líder");
         }
     }
 
     private void syncWithOtherServers() {
-        System.out.println("Sincronizando mi estado con otros servidores...");
+        System.out.println("Sincronizando mi estado con otros servidores");
         
         if (backupConnector instanceof ServerConnectorImpl) {
             ServerConnectorImpl connector = (ServerConnectorImpl) backupConnector;

@@ -6,10 +6,10 @@ import java.rmi.registry.Registry;
 
 public class ClientMain {
     public static void main(String[] args) {
-        System.out.println("=== CLIENTE ===");
+        System.out.println("Cliente");
         
         String username = "User";
-        int port = 1099; // Default
+        int port = 1099;
         
         // Si recibe argumento, usar ese puerto
         if (args.length > 0) {
@@ -35,7 +35,7 @@ public class ClientMain {
             
             System.out.println("Conectado al servidor en puerto " + port);
             
-            // NUEVO: Pausa para dar tiempo a sincronización del servidor
+            // Pausa para dar tiempo a sincronización del servidor
             System.out.println("Esperando sincronización inicial (300ms)...");
             Thread.sleep(300);
             
@@ -43,7 +43,6 @@ public class ClientMain {
             
         } catch (Exception e) {
             System.err.println("ERROR conectando: " + e.getMessage());
-            System.out.println("Asegurate que el servidor en puerto " + port + " esta corriendo");
         }
     }
 }

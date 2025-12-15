@@ -10,11 +10,10 @@ public class ServerState {
     public ServerState(int myServerId, boolean initiallyLeader) {
         this.myServerId = myServerId;
         this.isLeader.set(initiallyLeader);
-        // NO hardcodear líder inicial
+       
         if (initiallyLeader) {
             this.currentLeaderId.set(myServerId);
         }
-        // else: se quedará en -1 hasta que se detecte líder
     }
     public int getMyServerId() { return myServerId; }
     public boolean isLeader() { return isLeader.get(); }

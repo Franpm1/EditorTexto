@@ -14,6 +14,6 @@ public interface IEditorService extends Remote {
     void declareLeader(int leaderId) throws RemoteException;
     void becomeLeader(String doc, VectorClock clock) throws RemoteException; 
     
-    // NUEVO: Para sincronización cuando un líder se recupera
+    // Para sincronización cuando un líder se recupera
     DocumentSnapshot getCurrentState() throws RemoteException;
 }

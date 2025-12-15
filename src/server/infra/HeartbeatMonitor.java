@@ -31,7 +31,7 @@ public class HeartbeatMonitor implements Runnable {
 
             RemoteServerInfo leader = bully.getCurrentLeaderInfo();
             if (leader == null) {
-                System.out.println("No hay líder, reiniciando elección...");
+                System.out.println("No hay líder, reiniciando elección");
                 bully.onLeaderDown();
                 continue;
             }
@@ -40,7 +40,7 @@ public class HeartbeatMonitor implements Runnable {
                 // Heartbeat rápido
                 leader.getStub().heartbeat();
             } catch (Exception e) {
-                System.out.println("Líder NO responde");
+                System.out.println("El líder no responde");
                 serverState.setCurrentLeaderId(-1);
                 bully.onLeaderDown();
             }

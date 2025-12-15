@@ -23,27 +23,29 @@ public class Document {
             int pos = Math.max(0, Math.min(op.getPosition(), content.length()));
 
             if ("INSERT".equalsIgnoreCase(op.getType())) {
+
                 content.insert(pos, op.getText());
+                
             } else if ("DELETE".equalsIgnoreCase(op.getType())) {
-                // CORREGIDO: Borrado de rango
+
                 int len = op.getText().length(); 
                 int end = Math.min(pos + len, content.length());
                 if (pos < content.length()) content.delete(pos, end);
+
             } else if ("REPLACE".equalsIgnoreCase(op.getType())) {
-                // NUEVO: Sustitución de fragmento
-                // El texto viene como "longitud_a_borrar|texto_nuevo"
+
                 String[] parts = op.getText().split("\\|", 2);
                 if (parts.length == 2) {
                     int deleteLen = Integer.parseInt(parts[0]);
                     String newText = parts[1];
                     
-                    // 1. Borrar el fragmento existente
+                    // Borrar el fragmento existente
                     int deleteEnd = Math.min(pos + deleteLen, content.length());
                     if (pos < content.length()) {
                         content.delete(pos, deleteEnd);
                     }
                     
-                    // 2. Insertar el nuevo texto
+                    // Insertar el nuevo texto
                     content.insert(pos, newText);
                 }
             }

@@ -21,7 +21,7 @@ public class ConsoleUI {
 
     public void setServer(IEditorService server) {
         this.server = server;
-        System.out.println("✅ Servidor configurado");
+        System.out.println("Servidor configurado");
     }
 
     public void updateView(String content, VectorClock clock) {
@@ -62,7 +62,6 @@ public class ConsoleUI {
                 System.out.flush();
             }
         } catch (Exception e) {
-            // Si falla, solo imprimimos líneas nuevas
             System.out.println("\n".repeat(50));
         }
     }
@@ -110,7 +109,7 @@ public class ConsoleUI {
                     String text = parts[2];
                     Operation op = new Operation("INSERT", pos, text, username, null);
                     server.executeOperation(op);
-                    System.out.println(" Operación enviada. Esperando actualización...");
+                    System.out.println(" Operación enviada, esperando actualización");
                 } catch (NumberFormatException e) {
                     System.err.println(" La posición debe ser un número");
                 } catch (RemoteException e) {
@@ -129,7 +128,7 @@ public class ConsoleUI {
                     String dummy = "x".repeat(len);
                     Operation op = new Operation("DELETE", pos, dummy, username, null);
                     server.executeOperation(op);
-                    System.out.println(" Operación enviada. Esperando actualización...");
+                    System.out.println(" Operación enviada, esperando actualización");
                 } catch (NumberFormatException e) {
                     System.err.println(" Posición y longitud deben ser números");
                 } catch (RemoteException e) {
@@ -146,7 +145,7 @@ public class ConsoleUI {
                     int pos = Integer.parseInt(parts[1]);
                     Operation op = new Operation("INSERT", pos, "\n", username, null);
                     server.executeOperation(op);
-                    System.out.println(" Operación enviada. Esperando actualización...");
+                    System.out.println(" Operación enviada, esperando actualización");
                 } catch (NumberFormatException e) {
                     System.err.println(" La posición debe ser un número entero");
                 } catch (RemoteException e) {
@@ -174,7 +173,7 @@ public class ConsoleUI {
                     String operationText = deleteLen + "|" + newText;
                     Operation op = new Operation("REPLACE", pos, operationText, username, null);
                     server.executeOperation(op);
-                    System.out.println(" Sustitución enviada. Esperando actualización...");
+                    System.out.println(" Sustitución enviada, esperando actualización");
                 } catch (NumberFormatException e) {
                     System.err.println(" Posición y longitud deben ser números");
                 } catch (RemoteException e) {
@@ -187,12 +186,11 @@ public class ConsoleUI {
             case "refresh":
                 try {
                     // Enviar una operación nula o pedir sincronización
-                    // Opción simple: solicitar estado actual al servidor
-                    System.out.println(" Solicitando estado actual del servidor...");
+                    System.out.println(" Solicitando estado actual del servidor");
                     // Como no hay método directo, enviamos una operación dummy que no cambie nada
                     Operation dummyOp = new Operation("INSERT", 0, "", username, null);
                     server.executeOperation(dummyOp);
-                    System.out.println(" Refresh solicitado. Esperando actualización...");
+                    System.out.println(" Refresh solicitado, esperando actualización");
                 } catch (RemoteException e) {
                     System.err.println(" Error de conexión: " + e.getMessage());
                 }

@@ -30,7 +30,7 @@ public class ConfigLoader {
             }
         } catch (Exception e) {
             System.err.println("Error cargando config: " + e.getMessage());
-            // Fallback: usar localhost
+            // Fallback: se usa localhost
             System.out.println("Usando configuracion localhost por defecto");
             for (int i = 0; i < 6; i++) {
                 servers.add(new RemoteServerInfo(i, "127.0.0.1", 1099 + i, "EditorService"));

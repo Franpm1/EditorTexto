@@ -7,7 +7,7 @@ public class Operation implements Serializable {
 
     private final String type; // "INSERT", "DELETE" o "REPLACE"
     private final int position;
-    private final String text; // Texto a insertar o formato especial para DELETE/REPLACE
+    private final String text; 
     private final String owner;
     private final VectorClock vectorClock;
 

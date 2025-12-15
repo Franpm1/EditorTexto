@@ -85,7 +85,7 @@ public class ServerMain {
                 state.setCurrentLeaderId(myId);
             }
 
-            System.out.println("✅ SERVIDOR " + myId + " LISTO");
+            System.out.println("SERVIDOR " + myId + " LISTO");
             System.out.println("URL: rmi://" + localIP + ":" + port + "/EditorService");
             System.out.println("Estado: " + (state.isLeader() ? "LÍDER" : "BACKUP"));
 
