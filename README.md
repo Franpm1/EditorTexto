@@ -134,43 +134,49 @@ sequenceDiagram
     ServerBackup->>ClientA: syncState(fullDoc, clock)
     deactivate ServerBackup
 ```
-### 3. Protocolo de Comunicación y Replicación (Vista de Secuencia)
-```mermaid
-graph TD
-    subgraph LAN [Red Local]
-        style LAN fill:#f9f9f9,stroke:#333,stroke-width:2px
-        
-        subgraph Machine1 [LÍDER]
-            style Machine1 fill:#e1f5fe,stroke:#01579b
-            S0((Servidor 0<br/>LÍDER))
-            C1[Cliente Local]
-        end
-        
-        subgraph Machine2 [BACKUP]
-            style Machine2 fill:#fff3e0,stroke:#e65100
-            S1((Servidor 1<br/>BACKUP))
-            C2[Cliente Remoto]
-        end
-    end
-
-    %% FLUJO DE ESCRITURA
-    C1 -- 1. RMI (Insert) --> S0
-    
-    %% FLUJO DE ACTUALIZACIÓN (Sync)
-    %% Ajuste: El líder también actualiza a su propio cliente
-    S0 -- 2. RMI (Sync) --> C1
-    
-    %% REPLICACIÓN
-    S0 -- 3. RMI (Replicación) --> S1
-    S1 -- 4. RMI (Sync) --> C2
-    
-    %% HEARTBEATS (Vigilancia)
+### 4. Topología de Red y Monitorización Concurrente
+Representa el el flujo de datos principal (escritura y replicación RMI) y se destaca el mecanismo de Heartbeat, el cual se ejecuta paralela e independientemente. Esto permite que los nodos Backup verifiquen la disponibilidad del Líder de forma continua y concurrente sin bloquear las operaciones de edición en tiempo real.
+```mermaid 
+---
+config:
+  look: classic
+  theme: forest
+---
+flowchart TB
+ subgraph Machine1["LÍDER"]
+        S0(("Servidor X<br>LÍDER"))
+        C1["Cliente Local"]
+  end
+ subgraph Machine2["BACKUP"]
+        S1(("Servidor Y<br>BACKUP"))
+        C2["Cliente Remoto"]
+  end
+ subgraph Lienzo[" "]
+    direction TB
+        Machine1
+        Machine2
+  end
+    C1 -- "1. RMI (Insert)" --> S0
+    S0 -- "2. RMI (Sync)" --> C1
+    S0 -- "3. RMI (Replicación)" --> S1
+    S1 -- "4. RMI (Sync)" --> C2
     S1 -. RMI (Heartbeat) .-> S0
 
-    %% ESTILOS
-    %% Enlaces de datos (Verdes)
-    linkStyle 0,1,2,3 stroke-width:2px,fill:none,stroke:green;
-    
-    %% Enlace de Heartbeat (Rojo Punteado)
-    linkStyle 4 stroke-width:1px,fill:none,stroke:red,stroke-dasharray: 5 5;
+     S0:::leader
+     C1:::client
+     S1:::backup
+     C2:::client
+    classDef leader fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:black
+    classDef backup fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:black
+    classDef client fill:#f5f5f5,stroke:#333,stroke-width:1px,color:black
+    style S0 fill:#2962FF
+    style S1 fill:#FF6D00
+    style Machine1 fill:#e1f5fe,stroke:#01579b,color:black
+    style Machine2 fill:#fff3e0,stroke:#e65100,color:black
+    style Lienzo fill:#ffffff,stroke:#333,stroke-width:2px,color:black
+    linkStyle 0 stroke:#2e7d32,stroke-width:2px,fill:none
+    linkStyle 1 stroke:#2e7d32,stroke-width:2px,fill:none
+    linkStyle 2 stroke:#2e7d32,stroke-width:2px,fill:none
+    linkStyle 3 stroke:#2e7d32,stroke-width:2px,fill:none
+    linkStyle 4 stroke:#d32f2f,stroke-width:2px,fill:none,stroke-dasharray: 5 5
 ```
