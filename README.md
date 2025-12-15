@@ -1,5 +1,6 @@
-# Editor Distribuido Cooperativo (RMI y Consistencia Causal)
-Este proyecto implementa un editor de texto cooperativo con múltiples servidores, utilizando RMI (Invocación a Métodos Remotos) para la comunicación, el protocolo Bully para la elección de líder y Relojes Vectoriales para garantizar la Consistencia Causal entre clientes.
+# Editor Colaborativo Distribuido
+Sistema de edición colaborativa en tiempo real implementado en **Java RMI** bajo una arquitectura **Primary-Backup** para alta disponibilidad. 
+Incorpora el **Algoritmo de Bully** para la elección dinámica de líder y utiliza **Relojes Vectoriales** (Vector Clocks) para gestionar la causalidad y consistencia eventual entre réplicas.
 
 ``` mermaid
 flowchart TD
